@@ -1,0 +1,13 @@
+# 1. Ignore everything in the root
+/*
+
+# 2. But do NOT ignore the .gitignore file itself
+!/.gitignore
+
+# 3. Allow only the code folder and its contents
+!/code_animalclef/
+
+# 4. Standard Python/OS cleanup (always good to have)
+**/__pycache__/
+**/.DS_Store
+*.pyc
