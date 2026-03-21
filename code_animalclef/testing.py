@@ -13,8 +13,8 @@ from classify_SeeTurtles import classify_SeeTurtle
 if __name__ == '__main__':
 
     # switches
-    sw_make_val_set = True
-    sw_use_only_trn = True
+    sw_make_val_set = False
+    sw_use_only_trn = False
     sw_show_only_ids_with_mistakes = True
     sw_save_images_to_files = True
     db_idx = 1
@@ -70,7 +70,7 @@ if __name__ == '__main__':
 
     if db_name == 'SeaTurtleID2022':
 
-        pred_labels = classify_SeeTurtle(features=features, known_labels=labels)
+        pred_labels, dbg_strs = classify_SeeTurtle(features=features, known_labels=labels)
 
     if db_name == 'LynxID2025':
         pass
@@ -122,16 +122,16 @@ if __name__ == '__main__':
                 ax_ = ax.flatten()[ax_idx]
                 ax_.imshow(img)
                 if val_set[idx]:
-                    ax_.set_title('VAL')
+                    ax_.set_title('VAL\n' + dbg_strs[idx])
                 if tst_set[idx]:
-                    ax_.set_title('TST')
+                    ax_.set_title('TST\n' + dbg_strs[idx])
                 if pred_miss[idx]:
-                    ax_.set_title('miss as ' + str(pred_labels[idx]))
+                    ax_.set_title('miss as ' + str(pred_labels[idx]) + '\n' + dbg_strs[idx])
                 if pred_false[idx]:
-                    ax_.set_title('false; true is ' + str(all_labels[idx]))
+                    ax_.set_title('false; true is ' + str(all_labels[idx]) + '\n' + dbg_strs[idx])
 
             if sw_save_images_to_files:
-                save_path = os.path.join(save_folder, str(id) + '.jpg')
+                save_path = os.path.join(save_folder, ('T' if tst_set.sum() > 0 else '') + str(id) + '.jpg')
                 fig.savefig(save_path, format="jpg", dpi=150)
             else:
                 plt.show()
