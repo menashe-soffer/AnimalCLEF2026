@@ -7,30 +7,29 @@ import os
 import glob
 import sklearn.metrics
 
+from paths_and_constants import *
 from classify_SeeTurtles import classify_SeeTurtle
 
 
 if __name__ == '__main__':
 
     # switches
-    sw_make_val_set = False
-    sw_use_only_trn = False
+    sw_make_val_set = True
+    sw_use_only_trn = True
     sw_show_only_ids_with_mistakes = True
     sw_save_images_to_files = True
     db_idx = 1
 
-    root = '/media/soffer/TOSHIBA EXT/AnimalCLEF2026/data'
     np.random.seed(1)
 
-    dataset_full = AnimalCLEF2026(root, transform=None, load_label=True, factorize_label=True, check_files=False)
-    db_name_list = ['SalamanderID2025', 'SeaTurtleID2022', 'LynxID2025', 'TexasHornedLizards']
+    dataset_full = AnimalCLEF2026(ROOT_DATA, transform=None, load_label=True, factorize_label=True, check_files=False)
     feature_model_dict = {'SalamanderID2025': 'Mega-384',
                              'SeaTurtleID2022': 'Mega-384',
                              'LynxID2025': 'Mega-384',
                              'TexasHornedLizards': 'Mega-384'}
-    db_name = db_name_list[db_idx]
+    db_name = SUBSETS[db_idx]
     dataset = dataset_full.get_subset(dataset_full.df['dataset'] == db_name)
-    feat_fname = os.path.join(root.replace('data', 'features'), '{}_{}.npz'.format(db_name, feature_model_dict[db_name]))
+    feat_fname = os.path.join(ROOT_FEATURES, '{}_{}.npz'.format(db_name, feature_model_dict[db_name]))
     data = np.load(feat_fname)
     features, all_labels = data['all_features'], data['all_labels']
     if sw_use_only_trn:
@@ -81,7 +80,7 @@ if __name__ == '__main__':
 
 
     if sw_save_images_to_files:
-        save_folder = root.replace('data', 'debug')
+        save_folder = ROOT_DEBUG
         os.makedirs(save_folder, exist_ok=True)
         try:
             [os.remove(f) for f in glob.glob(save_folder + '/*.*')]

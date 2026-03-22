@@ -15,6 +15,8 @@ from wildlife_datasets.datasets import AnimalCLEF2026
 from wildlife_tools.features import DeepFeatures
 #from wildlife_tools.similarity import CosineSimilarity
 
+from image_tools import UnderwaterEnhance
+
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # 1. Setup Model
@@ -43,11 +45,17 @@ print(dataset_names)
 
 for model_name in models:
 
+    if model_name != 'Mega-384':
+        continue
+
     #print(model_name)
     model = models[model_name]
     model.to(device).eval()
 
     for name in dataset_names:
+
+        if name != 'SeaTurtleID2022':
+            continue
 
         #dataset = dataset_full.get_subset(dataset_full.df['split'] == 'train').get_subset(dataset_full.df['dataset'] == dataset_names[0])
         dataset = dataset_full.get_subset(dataset_full.df['dataset'] == name)
@@ -58,6 +66,7 @@ for model_name in models:
         print(config)
         config['crop_pct'] = 1.0
         transform = timm.data.create_transform(**config, is_training=False)
+        #dataset.set_transform(T.Compose([UnderwaterEnhance, transform]))
         dataset.set_transform(transform)
         #dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
         #continue
