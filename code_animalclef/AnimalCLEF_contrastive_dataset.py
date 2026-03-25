@@ -69,7 +69,7 @@ class AnimalCLEFContrastiveDataset(Dataset):
             self.transform_trn = T.Compose([
                 UnderwaterEnhance,
                 T.Resize((384, 384)),
-                T.RandomResizedCrop(size=384, scale=(0.2, 1.0)),
+                T.RandomResizedCrop(size=384, scale=(0.5, 1.0)),
                 T.RandomHorizontalFlip(),
                 T.RandomApply([T.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
                 T.RandomGrayscale(p=0.2),
@@ -171,18 +171,6 @@ if __name__ == '__main__':
     import torchvision.transforms as T
     from torch.utils.data import DataLoader
 
-    # # --- 1. Define Stochastic Augmentations (SimCLR Style) ---
-    # contrastive_transforms = T.Compose([
-    #     UnderwaterEnhance,
-    #     T.Resize((384, 384)),
-    #     T.RandomResizedCrop(size=384, scale=(0.2, 1.0)),
-    #     T.RandomHorizontalFlip(),
-    #     T.RandomApply([T.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
-    #     T.RandomGrayscale(p=0.2),
-    #     T.ToTensor(),
-    #     T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    # ])
-    #
 
     def main():
 
