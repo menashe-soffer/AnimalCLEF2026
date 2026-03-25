@@ -10,6 +10,7 @@ import os
 
 import gc
 import psutil
+from tqdm import tqdm
 
 from class_utils import calc_distances
 
@@ -48,7 +49,7 @@ def visualize_distances(feat_version_names, feat_versions, labels):
     plot_rows = int(np.ceil(np.sqrt(num_versions)))
     plot_cols = int(np.ceil(num_versions / plot_rows))
 
-    fig, ax = plt.subplots(plot_rows, 2 * plot_cols, figsize=(16, 12), sharex=True, sharey=True)
+    fig, ax = plt.subplots(plot_rows, 2 * plot_cols, figsize=(16, 12), sharex=False, sharey=False)
     ax1 = ax[:, :plot_cols]
     ax2 = ax[:, plot_cols:]
     for i in range(num_versions):
@@ -56,21 +57,43 @@ def visualize_distances(feat_version_names, feat_versions, labels):
         trn_labels, _, _, _, distances_trn_trn, _, _, _ = calc_distances(feat_versions[i], labels, metric='similarity')
         good_labels = np.argwhere(np.bincount(trn_labels) > 6).flatten()
         mask = np.array([l in good_labels for l in trn_labels])
-        trn_labels = trn_labels[mask]
-        distances_trn_trn = distances_trn_trn[mask][:, mask]
+        trn_labels_ = trn_labels[mask]
+        distances_trn_trn_ = distances_trn_trn[mask][:, mask]
         #print_memory()
-        reorder = np.argsort(trn_labels)
-        distances_trn_trn = distances_trn_trn[reorder][:, reorder]
-        sns.heatmap(distances_trn_trn[:1000, :1000], ax=ax1.flatten()[i], square=True)
+        reorder = np.argsort(trn_labels_)
+        distances_trn_trn_ = distances_trn_trn_[reorder][:, reorder]
+        sns.heatmap(distances_trn_trn_[:1000, :1000], ax=ax1.flatten()[i], square=True)
         #print_memory()
-        contrast, inner, outer = evaluate_contrast(distances_trn_trn, trn_labels)
+        contrast, inner, outer = evaluate_contrast(distances_trn_trn_, trn_labels_)
         ax1.flatten()[i].set_title(feat_version_names[i] + ' (S)\n' + str(np.round(contrast, decimals=2)) + '  {:5.3f} / {:5.3f}'.format(inner, outer))
+        del trn_labels_, distances_trn_trn_
+        gc.collect()
         # _, _, _, _, distances_trn_trn, _, _ = calc_distances(feat_versions[i], labels, metric='euclidian')
         # distances_trn_trn = distances_trn_trn[reorder][:, reorder]
         # sns.heatmap(distances_trn_trn[:1000, :1000], ax=ax2.flatten()[i], square=True)
         # #print_memory()
         # contrast = evaluate_contrast(distances_trn_trn, trn_labels)
         # ax2.flatten()[i].set_title(feat_version_names[i] + ' (E)\n' + str(np.round(contrast, decimals=2)))
+        #
+        # distance distributions on ax2
+        inner_distances, outer_distances = np.zeros(0), np.zeros(0)
+        for label in tqdm(np.unique(trn_labels)):
+            mask = trn_labels == label
+            #print(len(inner_distances), mask.shape, mask.sum())
+            inner_distances = np.concatenate((inner_distances, distances_trn_trn[mask][:, mask].flatten()))
+            outer_distances = np.concatenate((outer_distances, distances_trn_trn[mask][:, ~mask].flatten()))
+        h_inner, x_inner = np.histogram(inner_distances, bins=np.linspace(start=0, stop=1, num=51))
+        h_outer, x_outer = np.histogram(outer_distances, bins=np.linspace(start=0, stop=1, num=51))
+        # print(inner_distances.size, inner_distances.min(), inner_distances.max())
+        # print(x_inner, h_inner)
+        # print(outer_distances.size, outer_distances.min(), outer_distances.max())
+        # print(x_outer, h_outer)
+        del distances_trn_trn, inner_distances, outer_distances
+        gc.collect()
+        ax2.flatten()[i].plot((x_inner[:-1] + x_inner[1:]) / 2, h_inner / h_inner.sum())
+        ax2.flatten()[i].plot((x_outer[:-1] + x_outer[1:]) / 2, h_outer / h_outer.sum())
+        ax2.flatten()[i].set_title(feat_version_names[i] + ' (S)\n' + str(np.round(contrast, decimals=2)) + '  {:5.3f} / {:5.3f}'.format(inner, outer))
+        #
         feat_versions[i] = None
         gc.collect()
         #print_memory()
@@ -78,15 +101,30 @@ def visualize_distances(feat_version_names, feat_versions, labels):
     return fig
 
 
+
+# def analyze_feture_vector(features, labels):
+#
+#     # use only labeled data
+#     mask = labels > -1
+#     labels_ = labels[mask]
+#     features_ = features[mask]
+#     lp = np.bincount(labels_)
+#     pick_labels = np.argwhere[lp > 2].flatten().astype(int)
+#     mask = np.array([l in pick_labels for l in labels_]).astype(int)
+#     labels_ = labels_[mask]
+#     features_ = features_[mask]
+#     for l in np.unique(pick_labels):
+
+
 if __name__ == '__main__':
 
     ROOT_FOLDER = '/media/soffer/TOSHIBA EXT/AnimalCLEF2026'
 
     names = ['SeaTurtleID2022', 'SalamanderID2025', 'LynxID2025', 'TexasHornedLizards'][:3]
-    model_names = ['Mega-384', 'DINOv2', 'sigLip']#['Mega-224', 'Mega-384', 'miewid']
-    extract_modes = ['', '_s']# '_blr', '_mix']
+    model_names = ['Mega-384']#, 'DINOv2', 'sigLip']#['Mega-224', 'Mega-384', 'miewid']
+    extract_modes = ['', '_s', '_enh_rfnd', '_enh_rfnd_s']# '_blr', '_mix']
 
-    for name in names:
+    for name in names[:3]:
         features_list, featues_names = [], []
         for model_name in model_names:
             for extract_mode in extract_modes:
@@ -98,6 +136,7 @@ if __name__ == '__main__':
                 features_list.append(data['all_features'].squeeze())
         fig = visualize_distances(feat_version_names=featues_names, feat_versions=features_list, labels=labels)
         fig.suptitle(name)
+        # analyze_feture_vector(features_list[0], labels)
     plt.show()
 
 

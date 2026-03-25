@@ -50,19 +50,21 @@ from tqdm import tqdm
 import torch.nn.functional as F
 
 
-def train_model(model, dataset, epochs=10, lr=1e-4, batch_size=8, device='cuda'):
+def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8, device='cuda'):
+
     model.to(device)
 
     # Only optimize parameters that are NOT frozen (Stages 3/4 + Head)
     optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
 
     # Standard Triplet Margin Loss
-    criterion = torch.nn.TripletMarginLoss(margin=0.3, p=2)
+    criterion = torch.nn.TripletMarginLoss(margin=0.3*1.5, p=2)
 
+    best_avg_val = 999
     for epoch in range(epochs):
         # --- TRAINING PHASE ---
         dataset.use_split('trn')
-        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
 
         model.train()
         running_trn_loss = 0.0
@@ -108,14 +110,18 @@ def train_model(model, dataset, epochs=10, lr=1e-4, batch_size=8, device='cuda')
 
         print(f"Epoch {epoch + 1} Complete | TRN Loss: {avg_trn:.4f} | VAL Loss: {avg_val:.4f}")
 
+        if avg_val < best_avg_val:
+
+            # Save the specific weights
+            best_avg_val = avg_val
+            torch.save(model.state_dict(), output_fname)
+
     return model
 
 
 
 
-if __name__ == '__main__':
-
-    subset_id = 1
+def main(subset_id, num_epochs=5):
 
 
     # (1) Generate and configure models
@@ -153,11 +159,19 @@ if __name__ == '__main__':
 
     # (4) Refine Specifically for Turtles
     # You might want to filter the base_ds to turtles ONLY before this step
-    print("\n--- Starting Sea Turtle Refinement ---")
-    refined_turtle_model = train_model(model, triplet_ds, epochs=5)
+    print("\n--- Starting {} Refinement ---".format(SUBSETS[subset_id]))
+    output_fname = os.path.join(ROOT_MODELS,'mega384_refined_{}_trplt.pth'.format(SUBSETS[subset_id]))
+    refined_model = train_model(model, triplet_ds, output_fname, epochs=num_epochs)
 
-    # Save the specific weights
-    torch.save(refined_turtle_model.state_dict(), os.path.join(ROOT_MODELS,'mega384_refined_{}.pth'.format(SUBSETS[subset_id])))
+    # # Save the specific weights
+    # torch.save(refined_model.state_dict(), os.path.join(ROOT_MODELS,'mega384_refined_{}.pth'.format(SUBSETS[subset_id])))
 
-    # (5) Repeat for another species
-    # bird_model = AnimalReIDRefiner()...
+
+
+
+if __name__ == '__main__':
+
+    main(subset_id=0, num_epochs=12)
+    #main(subset_id=1, num_epochs=7)
+    main(subset_id=2, num_epochs=12)
+

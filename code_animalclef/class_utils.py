@@ -47,11 +47,11 @@ def calc_distances(features, labels, metric='similarity'):
     return trn_labels, tst_labels, trn_fetures, tst_features, distances_trn_trn, distances_tst_trn, distances_tst_tst, distances
 
 
-def cluster(distances, eps=None):
+def cluster_dbscan(distances, eps=None):
 
     def cluster_step(distances, eps):
 
-        clustering = sklearn.cluster.DBSCAN(eps=eps, metric='precomputed', min_samples=2)
+        clustering = sklearn.cluster.DBSCAN(eps=eps, metric='precomputed', min_samples=4)
         clusters = clustering.fit(distances)
 
         labels = np.array(clusters.labels_)
@@ -79,6 +79,38 @@ def cluster(distances, eps=None):
 
         return cluster_step(distances, eps)
 
+
+def cluster_agglomerative(distances, threshold=None):
+
+    def cluster_step(distances, thresh):
+        # n_clusters must be None to use distance_threshold
+        clustering = sklearn.cluster.AgglomerativeClustering(
+            n_clusters=None,
+            distance_threshold=thresh,
+            metric='precomputed',
+            linkage='complete' # 'complete' or 'average' are best for Re-ID
+        )
+        clusters = clustering.fit(distances)
+        return clusters.labels_
+
+    if threshold is None:
+        # Scanning the distance threshold (similar to your eps scan)
+        thresh_vec, n_clusters_vec = [], []
+        # Since your Triplet Margin was 0.3-0.45, scan around that range
+        for t in np.arange(start=0.1, stop=1.0, step=0.05):
+            labels = cluster_step(distances, t)
+            thresh_vec.append(t)
+            n_clusters_vec.append(np.unique(labels).size)
+
+        plt.figure(figsize=(8, 5))
+        plt.plot(thresh_vec, n_clusters_vec, marker='o')
+        plt.title('Agglomerative Clustering: Threshold Scan')
+        plt.grid(True)
+        plt.xlabel('distance_threshold')
+        plt.ylabel('Number of Clusters')
+        plt.show()
+    else:
+        return cluster_step(distances, threshold)
 
 
 

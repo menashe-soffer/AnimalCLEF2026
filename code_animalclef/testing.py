@@ -15,7 +15,7 @@ if __name__ == '__main__':
 
     # switches
     sw_make_val_set = True
-    sw_use_only_trn = True
+    sw_use_only_trn = False
     sw_show_only_ids_with_mistakes = True
     sw_save_images_to_files = True
     db_idx = 1
@@ -24,7 +24,7 @@ if __name__ == '__main__':
 
     dataset_full = AnimalCLEF2026(ROOT_DATA, transform=None, load_label=True, factorize_label=True, check_files=False)
     feature_model_dict = {'SalamanderID2025': 'Mega-384',
-                             'SeaTurtleID2022': 'Mega-384',
+                             'SeaTurtleID2022': 'Mega-384_enh_rfnd',
                              'LynxID2025': 'Mega-384',
                              'TexasHornedLizards': 'Mega-384'}
     db_name = SUBSETS[db_idx]
