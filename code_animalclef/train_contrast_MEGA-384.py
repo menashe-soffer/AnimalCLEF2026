@@ -112,7 +112,7 @@ class AnimalReIDRefiner(nn.Module):
         if use_projector:
             self.projector = nn.Sequential(
                 nn.Linear(feature_dim, feature_dim),
-                nn.ReLU(),
+                nn.GELU(),
                 nn.Linear(feature_dim, projection_dim)  # Projects to a 128-D unit sphere
             )
         else:
@@ -136,52 +136,6 @@ class AnimalReIDRefiner(nn.Module):
         return self.projector(features)
 
 
-# option: add projection head
-#
-# class AnimalReIDRefiner(nn.Module):
-#     def __init__(self, model_name="hf-hub:BVRA/MegaDescriptor-L-384", use_projector=True, projection_dim=128):
-#         super().__init__()
-#         self.model = timm.create_model(model_name, pretrained=True)
-#         self.use_projector = use_projector
-#
-#         # Swin-L (MegaDescriptor) output dim is 1536
-#         self.in_features = self.model.num_features
-#
-#         # Replace the original classification head with Identity to get the raw 1536 vector
-#         self.model.reset_classifier(0)
-#
-#         if self.use_projector:
-#             # The Non-Linear Projector (MLP)
-#             self.projector = nn.Sequential(
-#                 nn.Linear(self.in_features, self.in_features),
-#                 nn.ReLU(),
-#                 nn.Linear(self.in_features, projection_dim)
-#             )
-#         else:
-#             self.projector = nn.Identity()
-#
-#     def freeze_for_training(self, active_stages=[3]):
-#         # 1. Freeze everything
-#         for param in self.parameters():
-#             param.requires_grad = False
-#
-#         # 2. Unfreeze specific Swin stages (blocks)
-#         for stage_idx in active_stages:
-#             for param in self.model.layers[stage_idx].parameters():
-#                 param.requires_grad = True
-#
-#         # 3. Unfreeze final norm
-#         for param in self.model.norm.parameters():
-#             param.requires_grad = True
-#
-#         # 4. ALWAYS unfreeze the projector (or Identity head)
-#         if self.use_projector:
-#             for param in self.projector.parameters():
-#                 param.requires_grad = True
-#
-#     def forward(self, x):
-#         features = self.model(x)  # 1536-dim embedding
-#         return self.projector(features)  # 128-dim projection
 
 
 
@@ -229,14 +183,19 @@ def train_step(model, loader, device, optimizer, criterion, pbar_str):
     return  avg_loss
 
 
-def train_contrastive(model, dataset, output_fname, epochs=5, lr=1e-4, batch_size=8, loss_type='SupCon', device='cuda'):
+def train_contrastive(model, dataset, output_fname, epochs=5, lr=1e-4, batch_size=8, loss_type='SupCon', temperature=0.07, device='cuda'):
 
     model.to(device)
-    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr, weight_decay=0.01)
+    backbone_params = model.backbone.parameters()  # Or your specific layers
+    projector_params = model.projector.parameters()
+    optimizer = torch.optim.AdamW([
+        {'params': backbone_params, 'lr': lr},  # Stable fine-tuning
+        {'params': projector_params, 'lr': 10 * lr}  # Aggressive learning for the new head
+    ], weight_decay=lr)
     if loss_type == 'SupCon':
-        criterion = SupConLoss(temperature=0.07)
+        criterion = SupConLoss(temperature=temperature)
     if loss_type == 'NTXent':
-        criterion = NTXentLoss(temperature=0.07)
+        criterion = NTXentLoss(temperature=temperature)
 
     best_loss = 999
     trc_trn_loss, trc_val_loss = [], []
@@ -283,10 +242,10 @@ weak_train_transforms = T.Compose([
 
 
 TRN_PARAMS = dict()
-TRN_PARAMS['SalamanderID2025'] = dict({'epochs': 7, 'transform': None, 'loss_type': 'NTXent', 'temperature': 0.07, 'val_ratio': 0.2})
-TRN_PARAMS['SeaTurtleID2022'] = dict({'epochs': 5, 'transform': weak_train_transforms, 'loss_type': 'SupCon', 'temperature': 0.07, 'val_ratio': 0.2})
-TRN_PARAMS['LynxID2025'] = dict({'epochs': 5, 'transform': weak_train_transforms, 'loss_type': 'SupCon', 'temperature': 0.07, 'val_ratio': 0.2})
-TRN_PARAMS['TexasHornedLizards'] = dict({'epochs': 6, 'transform': None, 'loss_type': 'NTXent', 'temperature': 0.15, 'val_ratio': 0.2})
+TRN_PARAMS['SalamanderID2025'] = dict({'epochs': 12, 'lr': 1e-4, 'transform': None, 'loss_type': 'NTXent', 'temperature': 0.12, 'val_ratio': 0.2})
+TRN_PARAMS['SeaTurtleID2022'] = dict({'epochs': 5, 'lr': 1e-4, 'transform': weak_train_transforms, 'loss_type': 'SupCon', 'temperature': 0.07, 'val_ratio': 0.2})
+TRN_PARAMS['LynxID2025'] = dict({'epochs': 5, 'lr': 1e-4, 'transform': weak_train_transforms, 'loss_type': 'SupCon', 'temperature': 0.07, 'val_ratio': 0.2})
+TRN_PARAMS['TexasHornedLizards'] = dict({'epochs': 6, 'lr': 1e-4, 'transform': None, 'loss_type': 'NTXent', 'temperature': 0.15, 'val_ratio': 0.2})
 
 
 
@@ -310,12 +269,13 @@ def main(db_name):
     contrastive_ds.config_transforms(transforms_trn=trn_params['transform']) # set default for now
 
     # 4. Model and Training
-    model = AnimalReIDRefiner()
+    model = AnimalReIDRefiner(use_projector=False)
     model.freeze_for_training(active_stages=[3])
 
     output_path = os.path.join(ROOT_MODELS,'mega384_refined_{}_{}.pth'.format(loss_type, db_name))
     _, trc_trn_loss, trc_val_loss = \
-        train_contrastive(model, contrastive_ds, output_path, epochs=trn_params['epochs'], loss_type=loss_type)#, batch_size=16)
+        train_contrastive(model, contrastive_ds, output_path, epochs=trn_params['epochs'], lr=trn_params['lr'],
+                          loss_type=loss_type, temperature=trn_params['temperature'])
 
     return trc_trn_loss, trc_val_loss
 
@@ -334,7 +294,7 @@ if __name__ == '__main__':
         #
         plt.plot(trc_trn_loss, label='TRN {}  ({:3.1f} min.)'.format(db_name[:3], elapsed_time / 60))
         plt.plot(trc_val_loss, label='VAL ' + db_name[:3])
-        plt.ylim([0, 5])
+        plt.ylim([0, 3.5])
         plt.grid(True)
         plt.legend()
         plt.show(block=False)
