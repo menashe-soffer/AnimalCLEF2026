@@ -2,10 +2,7 @@ import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import torch
-import torch.nn as nn
-import timm
 import torchvision.transforms as T
-import torch.optim as optim
 from tqdm import tqdm
 import torch.nn.functional as F
 import os
@@ -16,10 +13,11 @@ from wildlife_datasets.datasets import AnimalCLEF2026
 from paths_and_constants import *
 from AnimalCLEF_contrastive_dataset import AnimalCLEFContrastiveDataset  # Your new class
 from image_tools import UnderwaterEnhance
+from my_models import AnimalReIDRefiner
 from monitoring import print_vram_stats
 
 
-class SupConLoss(nn.Module):
+class SupConLoss(torch.nn.Module):
     """Handles both NTXent (unlabeled) and SupCon (labeled) based on labels."""
 
     def __init__(self, temperature=0.07):
@@ -57,12 +55,8 @@ class SupConLoss(nn.Module):
         return -mean_log_prob_pos.mean()
 
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
-
-class NTXentLoss(nn.Module):
+class NTXentLoss(torch.nn.Module):
     def __init__(self, temperature=0.07):
         super(NTXentLoss, self).__init__()
         self.temperature = temperature
@@ -101,43 +95,6 @@ class NTXentLoss(nn.Module):
 
 
 
-class AnimalReIDRefiner(nn.Module):
-    def __init__(self, model_name="hf-hub:BVRA/MegaDescriptor-L-384", use_projector=True, projection_dim=256):
-        super().__init__()
-        self.backbone = timm.create_model(model_name, pretrained=True)
-        self.backbone.reset_classifier(0)
-
-        # 4. Add the SimCLR/SupCon standard projection head
-        feature_dim = self.backbone.num_features
-        if use_projector:
-            self.projector = nn.Sequential(
-                nn.Linear(feature_dim, feature_dim),
-                nn.GELU(),
-                nn.Linear(feature_dim, projection_dim)  # Projects to a 128-D unit sphere
-            )
-        else:
-            self.projector = nn.Identity()
-
-
-    def freeze_for_training(self, active_stages=[3]):
-        for param in self.backbone.parameters():
-            param.requires_grad = False
-        for stage_idx in active_stages:
-            for param in self.backbone.layers[stage_idx].parameters():
-                param.requires_grad = True
-        for param in self.backbone.norm.parameters():
-            param.requires_grad = True
-        for param in self.backbone.head.parameters():
-            param.requires_grad = True
-
-    def forward(self, x):
-
-        features = self.backbone(x)
-        return self.projector(features)
-
-
-
-
 
 
 def train_step(model, loader, device, optimizer, criterion, pbar_str):
@@ -145,6 +102,7 @@ def train_step(model, loader, device, optimizer, criterion, pbar_str):
     running_loss = 0.0
     # print_vram_stats()
 
+    aggr_cycle, aggr_counter = 2, 1
     pbar = tqdm(loader, desc=pbar_str)
     for batch in pbar:
         # batch contains 'im_q', 'im_k', and 'label'
@@ -158,7 +116,7 @@ def train_step(model, loader, device, optimizer, criterion, pbar_str):
 
         # Re-stack them ONLY for the loss function (very cheap)
         features = torch.cat([features_q, features_k], dim=0)
-        features = torch.nn.functional.normalize(features, dim=1)
+        features = F.normalize(features, dim=1)
         multi_labels = torch.cat([labels, labels], dim=0)
         if optimizer is not None:
             optimizer.zero_grad()
@@ -186,16 +144,22 @@ def train_step(model, loader, device, optimizer, criterion, pbar_str):
 def train_contrastive(model, dataset, output_fname, epochs=5, lr=1e-4, batch_size=8, loss_type='SupCon', temperature=0.07, device='cuda'):
 
     model.to(device)
+
+    if loss_type == 'SupCon':
+        criterion = SupConLoss(temperature=temperature)
+        proj_lr = 4 * lr
+        wgt_decay = 20 * lr
+    if loss_type == 'NTXent':
+        criterion = NTXentLoss(temperature=temperature)
+        proj_lr = 10 * lr
+        wgt_decay = 1 * lr
+
     backbone_params = model.backbone.parameters()  # Or your specific layers
     projector_params = model.projector.parameters()
     optimizer = torch.optim.AdamW([
-        {'params': backbone_params, 'lr': lr},  # Stable fine-tuning
-        {'params': projector_params, 'lr': 10 * lr}  # Aggressive learning for the new head
-    ], weight_decay=lr)
-    if loss_type == 'SupCon':
-        criterion = SupConLoss(temperature=temperature)
-    if loss_type == 'NTXent':
-        criterion = NTXentLoss(temperature=temperature)
+        {'params': backbone_params, 'lr': proj_lr},  # Stable fine-tuning
+        {'params': projector_params, 'lr': proj_lr}  # Aggressive learning for the new head
+    ], weight_decay=wgt_decay)
 
     best_loss = 999
     trc_trn_loss, trc_val_loss = [], []
@@ -205,7 +169,7 @@ def train_contrastive(model, dataset, output_fname, epochs=5, lr=1e-4, batch_siz
         # train step
         model.train()
         dataset.set_trn()
-        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
 
         avg_trn_loss = train_step(model, loader, device, optimizer, criterion,
                               pbar_str=f"Epoch {epoch + 1}/{epochs} [{loss_type}]")
@@ -230,22 +194,39 @@ def train_contrastive(model, dataset, output_fname, epochs=5, lr=1e-4, batch_siz
     return model, trc_trn_loss, trc_val_loss
 
 
-# for Labeled SupCon
+# for Labeled SupCon (Turtles)
 weak_train_transforms = T.Compose([
     UnderwaterEnhance,
-    T.RandomResizedCrop(384, scale=(0.75, 1.0)),
+    T.RandomResizedCrop(384, scale=(0.7, 1.0)),
     T.RandomHorizontalFlip(p=0.5),
     T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
     T.ToTensor(),
     T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
+lynx_trn_transform = T.Compose([
+    # No UnderwaterEnhance here!
+    T.RandomResizedCrop(384, scale=(0.8-0.25, 1.0)),
+    T.RandomHorizontalFlip(p=0.5),
+    T.ColorJitter(brightness=0.1, contrast=0.1), # Keep it subtle
+    #T.ColorJitter(brightness=0.25, contrast=0.2, hue=0.25, saturation=0.25), # Keep it subtle
+    T.ToTensor(),
+    T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
+
+lynx_val_transform = T.Compose([
+    # No UnderwaterEnhance here!
+    T.RandomHorizontalFlip(p=0.5),
+    T.ToTensor(),
+    T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
+
 
 TRN_PARAMS = dict()
-TRN_PARAMS['SalamanderID2025'] = dict({'epochs': 12, 'lr': 1e-4, 'transform': None, 'loss_type': 'NTXent', 'temperature': 0.12, 'val_ratio': 0.2})
-TRN_PARAMS['SeaTurtleID2022'] = dict({'epochs': 5, 'lr': 1e-4, 'transform': weak_train_transforms, 'loss_type': 'SupCon', 'temperature': 0.07, 'val_ratio': 0.2})
-TRN_PARAMS['LynxID2025'] = dict({'epochs': 5, 'lr': 1e-4, 'transform': weak_train_transforms, 'loss_type': 'SupCon', 'temperature': 0.07, 'val_ratio': 0.2})
-TRN_PARAMS['TexasHornedLizards'] = dict({'epochs': 6, 'lr': 1e-4, 'transform': None, 'loss_type': 'NTXent', 'temperature': 0.15, 'val_ratio': 0.2})
+TRN_PARAMS['SalamanderID2025'] = dict({'epochs': 20, 'lr': 1e-4, 'transform': None, 'loss_type': 'NTXent', 'temperature': 0.12, 'val_ratio': 0.2})
+TRN_PARAMS['SeaTurtleID2022'] = dict({'epochs': 8, 'lr': 1e-4, 'transform': weak_train_transforms, 'loss_type': 'SupCon', 'temperature': 0.07, 'val_ratio': 0.2})
+TRN_PARAMS['LynxID2025'] = dict({'epochs': 8, 'lr': 1e-4, 'transform': lynx_trn_transform, 'loss_type': 'SupCon', 'temperature': 0.05, 'val_ratio': 0.2})
+TRN_PARAMS['TexasHornedLizards'] = dict({'epochs': 20, 'lr': 1e-4, 'transform': None, 'loss_type': 'NTXent', 'temperature': 0.15, 'val_ratio': 0.2})
 
 
 
@@ -259,20 +240,20 @@ def main(db_name):
     # 1. Setup Base Data
     dataset_full = AnimalCLEF2026(root=ROOT_DATA)
     # This subset can now include your 'test' split for lizards!
-    base_subset = dataset_full.get_subset(dataset_full.df['dataset'] == db_name)
+    base_dataset = dataset_full.get_subset(dataset_full.df['dataset'] == db_name)
 
     # 2. Setup Contrastive Dataset
     contrastive_ds = AnimalCLEFContrastiveDataset()
-    contrastive_ds.attach_dataset(base_subset)
+    contrastive_ds.attach_dataset(base_dataset)
     contrastive_ds.make_split(val_ratio=trn_params['val_ratio'])
 
     contrastive_ds.config_transforms(transforms_trn=trn_params['transform']) # set default for now
 
     # 4. Model and Training
-    model = AnimalReIDRefiner(use_projector=False)
+    model = AnimalReIDRefiner(use_projector=True)
     model.freeze_for_training(active_stages=[3])
 
-    output_path = os.path.join(ROOT_MODELS,'mega384_refined_{}_{}.pth'.format(loss_type, db_name))
+    output_path = os.path.join(ROOT_MODELS,'mega384_crefined_{}.pth'.format(db_name))
     _, trc_trn_loss, trc_val_loss = \
         train_contrastive(model, contrastive_ds, output_path, epochs=trn_params['epochs'], lr=trn_params['lr'],
                           loss_type=loss_type, temperature=trn_params['temperature'])
@@ -283,7 +264,7 @@ def main(db_name):
 
 if __name__ == '__main__':
 
-    db_subset_selection = [0, 1, 2, 3]
+    db_subset_selection = [0, 1]#[0, 1, 2, 3]
 
     for db_name in [SUBSETS[i] for i in db_subset_selection]:
 
@@ -292,14 +273,15 @@ if __name__ == '__main__':
         end_time = time.perf_counter()
         elapsed_time = end_time - start_time
         #
-        plt.plot(trc_trn_loss, label='TRN {}  ({:3.1f} min.)'.format(db_name[:3], elapsed_time / 60))
-        plt.plot(trc_val_loss, label='VAL ' + db_name[:3])
-        plt.ylim([0, 3.5])
-        plt.grid(True)
-        plt.legend()
+        fig, ax = plt.subplots(1, 1)
+        ax.plot(trc_trn_loss, label='TRN {}  ({:3.1f} min.)'.format(db_name[:3], elapsed_time / 60))
+        ax.plot(trc_val_loss, label='VAL ' + db_name[:3])
+        ax.set_ylim([0, 3])
+        ax.grid(True)
+        ax.legend()
         plt.show(block=False)
         plt.pause(1)
-        plt.savefig(os.path.join(ROOT_MODELS, 'contrastive training convergence.png'))
+        plt.savefig(os.path.join(ROOT_MODELS, 'contrastive training convergence {}.png'.format(db_name)))
         #
 
-    plt.show()
+    #plt.show()

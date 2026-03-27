@@ -2,6 +2,9 @@ from pyexpat import features
 
 import numpy as np
 import matplotlib
+from IPython.core.display import display_html
+from IPython.core.pylabtools import figsize
+
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -32,10 +35,10 @@ def visualize_distances(feat_version_names, feat_versions, labels):
         groups = np.unique(labels)
         for grp in groups:
             mask = labels == grp
-            inside_dist = distances[mask][:, mask]
+            inside_dist = distances[mask][:, mask].min(axis=1)
             inner_sum += inside_dist.sum()
             inner_cnt += inside_dist.size
-            outer_dist = distances[mask][:, ~mask]
+            outer_dist = distances[mask][:, ~mask].min(axis=1)
             outer_sum += outer_dist.sum()
             outer_cnt += outer_dist.size
 
@@ -50,8 +53,10 @@ def visualize_distances(feat_version_names, feat_versions, labels):
     plot_cols = int(np.ceil(num_versions / plot_rows))
 
     fig, ax = plt.subplots(plot_rows, 2 * plot_cols, figsize=(16, 12), sharex=False, sharey=False)
-    ax1 = ax[:, :plot_cols]
-    ax2 = ax[:, plot_cols:]
+    ax1 = ax[:, :plot_cols] if plot_rows > 1 else ax[:plot_cols]
+    ax2 = ax[:, plot_cols:] if plot_rows > 1 else ax[plot_cols:]
+
+    display_distances, display_hists = [], []
     for i in range(num_versions):
         #print_memory()
         trn_labels, _, _, _, distances_trn_trn, _, _, _ = calc_distances(feat_versions[i], labels, metric='similarity')
@@ -63,6 +68,7 @@ def visualize_distances(feat_version_names, feat_versions, labels):
         reorder = np.argsort(trn_labels_)
         distances_trn_trn_ = distances_trn_trn_[reorder][:, reorder]
         sns.heatmap(distances_trn_trn_[:1000, :1000], ax=ax1.flatten()[i], square=True)
+        display_distances.append(distances_trn_trn_)
         #print_memory()
         contrast, inner, outer = evaluate_contrast(distances_trn_trn_, trn_labels_)
         ax1.flatten()[i].set_title(feat_version_names[i] + ' (S)\n' + str(np.round(contrast, decimals=2)) + '  {:5.3f} / {:5.3f}'.format(inner, outer))
@@ -93,50 +99,75 @@ def visualize_distances(feat_version_names, feat_versions, labels):
         ax2.flatten()[i].plot((x_inner[:-1] + x_inner[1:]) / 2, h_inner / h_inner.sum())
         ax2.flatten()[i].plot((x_outer[:-1] + x_outer[1:]) / 2, h_outer / h_outer.sum())
         ax2.flatten()[i].set_title(feat_version_names[i] + ' (S)\n' + str(np.round(contrast, decimals=2)) + '  {:5.3f} / {:5.3f}'.format(inner, outer))
+        display_hists.append([[(x_inner[:-1] + x_inner[1:]) / 2, h_inner / h_inner.sum()], [(x_outer[:-1] + x_outer[1:]) / 2, h_outer / h_outer.sum()]])
         #
         feat_versions[i] = None
         gc.collect()
         #print_memory()
 
-    return fig
+    return fig, display_distances, display_hists
 
 
 
-# def analyze_feture_vector(features, labels):
-#
-#     # use only labeled data
-#     mask = labels > -1
-#     labels_ = labels[mask]
-#     features_ = features[mask]
-#     lp = np.bincount(labels_)
-#     pick_labels = np.argwhere[lp > 2].flatten().astype(int)
-#     mask = np.array([l in pick_labels for l in labels_]).astype(int)
-#     labels_ = labels_[mask]
-#     features_ = features_[mask]
-#     for l in np.unique(pick_labels):
 
 
 if __name__ == '__main__':
 
     ROOT_FOLDER = '/media/soffer/TOSHIBA EXT/AnimalCLEF2026'
 
-    names = ['SeaTurtleID2022', 'SalamanderID2025', 'LynxID2025', 'TexasHornedLizards'][:3]
+    names = ['SeaTurtleID2022', 'SalamanderID2025', 'LynxID2025', 'TexasHornedLizards']
     model_names = ['Mega-384']#, 'DINOv2', 'sigLip']#['Mega-224', 'Mega-384', 'miewid']
     extract_modes = ['', '_s', '_enh_rfnd', '_enh_rfnd_s']# '_blr', '_mix']
 
-    for name in names[:3]:
-        features_list, featues_names = [], []
-        for model_name in model_names:
-            for extract_mode in extract_modes:
+    # dataset statistics
+    for name in names:
+        fname = os.path.join(ROOT_FOLDER, 'features', '{}_{}{}.npz'.format(name, 'Mega-384', ''))
+        data = np.load(fname)
+        labels = data['all_labels']
+        print(name, (labels > -1).sum(), (labels == -1).sum())
+        ID_size_hist = np.bincount(np.bincount(labels[labels > -1]))
 
-                fname = os.path.join(ROOT_FOLDER, 'features', '{}_{}{}.npz'.format(name, model_name, extract_mode))
-                data = np.load(fname)
-                labels = data['all_labels']
-                featues_names.append(model_name + extract_mode)
-                features_list.append(data['all_features'].squeeze())
-        fig = visualize_distances(feat_version_names=featues_names, feat_versions=features_list, labels=labels)
-        fig.suptitle(name)
-        # analyze_feture_vector(features_list[0], labels)
+    # # compare different features
+    # for name in names[:3]:
+    #     features_list, featues_names = [], []
+    #     for model_name in model_names:
+    #         for extract_mode in extract_modes:
+    #
+    #             fname = os.path.join(ROOT_FOLDER, 'features', '{}_{}{}.npz'.format(name, model_name, extract_mode))
+    #             data = np.load(fname)
+    #             labels = data['all_labels']
+    #             featues_names.append(model_name + extract_mode)
+    #             features_list.append(data['all_features'].squeeze())
+    #     fig, _, _ = visualize_distances(feat_version_names=featues_names, feat_versions=features_list, labels=labels)
+    #     fig.suptitle(name)
+    #     # analyze_feture_vector(features_list[0], labels)
+    # plt.show()
+
+
+    # single feature model per specious
+    fig, ax = plt.subplots(3, 3, figsize=(12, 12))
+    #[ax[3, i1].axis('off') for i1 in range(2)]
+    model_names = ['miewid' for name in names]
+    for i, (db_name, model_name) in enumerate(zip(names, model_names)):
+        features_list, featues_names = [], []
+        fname = os.path.join(ROOT_FOLDER, 'features', '{}_{}.npz'.format(db_name, model_name))
+        data = np.load(fname)
+        features = data['all_features']
+        labels = data['all_labels']
+        ID_size_hist = np.bincount(np.bincount(labels[labels > -1]))
+        featues_names.append(model_name)
+        features_list.append(data['all_features'].squeeze())
+
+        if i < 3:
+            _, distances, hists = visualize_distances(feat_version_names=featues_names, feat_versions=features_list, labels=labels)
+            ax[i, 0].axis('off')
+            sns.heatmap(distances[0][:1000, :1000], ax=ax[i, 0], square=True)
+            ax[i, 2].set_ylabel(db_name[:-4][:12])
+            ax[i, 2].yaxis.set_label_position("right")
+            [ax[i, 1].plot(hists[0][i1][0], hists[0][i1][1]) for i1 in range(2)]
+            ID_size_hist = np.bincount(np.bincount(labels[labels > -1]))
+            ax[i, 2].bar(np.arange(ID_size_hist.size), ID_size_hist)
+            #ax[i, 2].legend('{} trn, {} test'.format((labels > -1).sum(), (labels == -1).sum()))
     plt.show()
 
 
