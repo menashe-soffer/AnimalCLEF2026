@@ -25,7 +25,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 models = dict()
 models['Mega-384'] = timm.create_model("hf-hub:BVRA/MegaDescriptor-L-384", pretrained=True, num_classes=0)
 # models['Mega-224'] = timm.create_model("hf-hub:BVRA/MegaDescriptor-L-224", pretrained=True, num_classes=0)
-# models['miewid'] = AutoModel.from_pretrained('conservationxlabs/miewid-msv3', trust_remote_code=True)
+models['miewid'] = AutoModel.from_pretrained('conservationxlabs/miewid-msv3', trust_remote_code=True)
 models['DINOv2'] = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14')
 models['sigLip'] = timm.create_model('vit_so400m_patch14_siglip_224', pretrained=True, num_classes=0)
 
@@ -46,12 +46,12 @@ print(dataset_names)
 
 for model_name in models:
 
-    if model_name != 'Mega-384':
+    if model_name != 'miewid':
         continue
 
     #print(model_name)
     model = models[model_name]
-    #model.to(device).eval()
+    model.to(device).eval()
 
     for name in dataset_names:
 
@@ -59,17 +59,18 @@ for model_name in models:
         #     continue
 
         #
-        wgt_fname = os.path.join(ROOT_MODELS, 'mega384_refined_{}.pth'.format(name))
-        weights = torch.load(wgt_fname)
-        # Create a new dictionary without the "model." prefix
-        new_weights = {}
-        for k, v in weights.items():
-            if k.startswith("model."):
-                new_weights[k[6:]] = v  # Remove 'model.' (which is 6 characters)
-            else:
-                new_weights[k] = v
-        model.load_state_dict(new_weights)
-        model.to(device).eval()
+        if model_name == 'Mega-384':
+            wgt_fname = os.path.join(ROOT_MODELS, 'mega384_refined_{}.pth'.format(name))
+            weights = torch.load(wgt_fname)
+            # Create a new dictionary without the "model." prefix
+            new_weights = {}
+            for k, v in weights.items():
+                if k.startswith("model."):
+                    new_weights[k[6:]] = v  # Remove 'model.' (which is 6 characters)
+                else:
+                    new_weights[k] = v
+            model.load_state_dict(new_weights)
+            model.to(device).eval()
         #
 
         #dataset = dataset_full.get_subset(dataset_full.df['split'] == 'train').get_subset(dataset_full.df['dataset'] == dataset_names[0])
@@ -81,7 +82,8 @@ for model_name in models:
         print(config)
         config['crop_pct'] = 1.0
         transform = timm.data.create_transform(**config, is_training=False)
-        dataset.set_transform(T.Compose([UnderwaterEnhance, transform]))
+        if name not in ['LynxID2025', 'TexasHornedLizards']:
+            dataset.set_transform(T.Compose([UnderwaterEnhance, transform]))
         dataset.set_transform(transform)
         #dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
         #continue
@@ -107,7 +109,7 @@ for model_name in models:
                 # all_features_blr.append((feat3 + feat4).cpu().numpy() / 2)
                 # all_features_mix.append((feat1 + feat2 + feat3 + feat4).cpu().numpy() / 4)
 
-        fname = os.path.join(ROOT_FEATURES, name + '_' + model_name + '_enh_rfnd.npz')
+        fname = os.path.join(ROOT_FEATURES, name + '_' + model_name + '_miewid.npz')
         os.makedirs(os.path.dirname(fname), exist_ok=True)
         np.savez(fname, all_features=np.array(all_features), all_labels=np.array(all_labels))
         # np.savez(fname.replace('.npz', '_blr.npz'), all_features=np.array(all_features_blr), all_labels=np.array(all_labels))

@@ -36,29 +36,25 @@ class AnimalCLEFContrastiveDataset(Dataset):
         for id, key in enumerate(self.id_to_indices.keys()):
             for idx in self.id_to_indices[key]:
                 labels[idx] = id
+        self.last_genuine_id = labels.max()
         for idx in np.argwhere(labels == -1):
             labels[idx] = labels.max() + 1
 
-        # # Calculate offset for unique IDs
-        # max_labeled_id = self.labels[self.labels != -1].max() if len(self.labels[self.labels != -1]) > 0 else 0
-        #
-        # # Identify unlabeled (test) examples
-        # test_mask = (self.df['split'] == 'test')
-        # num_test = test_mask.sum()
-        #
-        # # Replace -1 or test placeholders with a running unique ID
-        # unique_test_ids = np.arange(max_labeled_id + 1, max_labeled_id + 1 + num_test)
-        # self.labels[test_mask] = unique_test_ids
-
-        # 2. Map every ID to its list of row indices for fast lookup
-        # This is the "dictionary builder" we discussed to keep __getitem__ fast
         self.df['assigned_label'] = labels
         self.id_to_indices = self.df.groupby('assigned_label').indices
 
         print(f"Dataset Attached: {len(self.df)} total images.")
         #print(f"Labeled IDs: {max_labeled_id + 1}, Unlabeled (Unique) IDs: {num_test}")
 
-    def config_transforms(self, transforms_trn=None, transforms_val=None):
+
+
+    def is_genuine(self, label):
+
+        return label <= self.last_genuine_id
+
+
+
+    def config_transforms(self, transforms_trn=None, transforms_val=None, enhance=True):
         """
         In SimCLR, we usually use the same stochastic transform pipeline
         for both 'q' and 'k' versions.
@@ -67,7 +63,7 @@ class AnimalCLEFContrastiveDataset(Dataset):
         if transforms_trn is None:
             # set default transform
             self.transform_trn = T.Compose([
-                UnderwaterEnhance,
+                # UnderwaterEnhance,
                 T.Resize((384, 384)),
                 T.RandomResizedCrop(size=384, scale=(0.5, 1.0)),
                 T.RandomHorizontalFlip(),
@@ -76,17 +72,21 @@ class AnimalCLEFContrastiveDataset(Dataset):
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
+            if enhance:
+                self.transform_trn = T.Compose([UnderwaterEnhance, self.transform_trn])
         else:
             self.transform_trn = transforms_trn
 
         if transforms_val is None:
             # set default transform
             self.transform_val = T.Compose([
-                UnderwaterEnhance,  # First, fix the visibility
+                # UnderwaterEnhance,  # First, fix the visibility
                 T.Resize((384, 384)),
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
+            if enhance:
+                self.transform_val = T.Compose([UnderwaterEnhance, self.transform_val])
         else:
             self.transform_val = transforms_val
 

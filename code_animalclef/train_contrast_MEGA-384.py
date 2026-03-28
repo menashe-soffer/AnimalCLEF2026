@@ -1,6 +1,8 @@
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
+import numpy as np
+
 import torch
 import torchvision.transforms as T
 from tqdm import tqdm
@@ -15,7 +17,7 @@ from AnimalCLEF_contrastive_dataset import AnimalCLEFContrastiveDataset  # Your 
 from image_tools import UnderwaterEnhance
 from my_models import AnimalReIDRefiner
 from monitoring import print_vram_stats
-
+from my_metrics import calculate_mrr_numpy
 
 class SupConLoss(torch.nn.Module):
     """Handles both NTXent (unlabeled) and SupCon (labeled) based on labels."""
@@ -97,11 +99,12 @@ class NTXentLoss(torch.nn.Module):
 
 
 
-def train_step(model, loader, device, optimizer, criterion, pbar_str):
+def train_step(model, loader, device, optimizer, criterion, pbar_str, collect_data=False):
 
     running_loss = 0.0
     # print_vram_stats()
 
+    data_collection = None
     aggr_cycle, aggr_counter = 2, 1
     pbar = tqdm(loader, desc=pbar_str)
     for batch in pbar:
@@ -121,6 +124,13 @@ def train_step(model, loader, device, optimizer, criterion, pbar_str):
         if optimizer is not None:
             optimizer.zero_grad()
 
+        if collect_data:
+            if data_collection is None:
+                data_collection = dict({'features': features.detach().cpu(), 'labels': multi_labels.detach().cpu()})
+            else:
+                data_collection['features'] = torch.cat([data_collection['features'], features.detach().cpu()], dim=0)
+                data_collection['labels'] = torch.cat([data_collection['labels'], multi_labels.detach().cpu()], dim=0)
+
         loss = criterion(features, multi_labels)
         if optimizer is not None:
             loss.backward()
@@ -138,7 +148,7 @@ def train_step(model, loader, device, optimizer, criterion, pbar_str):
     # print_vram_stats()
 
 
-    return  avg_loss
+    return  avg_loss, data_collection
 
 
 def train_contrastive(model, dataset, output_fname, epochs=5, lr=1e-4, batch_size=8, loss_type='SupCon', temperature=0.07, device='cuda'):
@@ -162,36 +172,58 @@ def train_contrastive(model, dataset, output_fname, epochs=5, lr=1e-4, batch_siz
     ], weight_decay=wgt_decay)
 
     best_loss = 999
-    trc_trn_loss, trc_val_loss = [], []
+    best_mmr = -1
+    trc_trn_loss, trc_val_loss, trc_val_mmr = [], [], []
 
     for epoch in range(epochs):
 
         # train step
         model.train()
         dataset.set_trn()
-        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
+        id_frequencies = dataset.df['assigned_label'].value_counts().to_dict()
+        weights = [1.0 / np.sqrt(max(id_frequencies[label], 3)) for label in dataset.df['assigned_label']]
+        sampler = torch.utils.data.WeightedRandomSampler(weights=weights, num_samples=len(dataset), replacement=True)          # Crucial for oversampling rare IDs)
+        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, sampler=sampler, num_workers=4, pin_memory=True, drop_last=True)
 
-        avg_trn_loss = train_step(model, loader, device, optimizer, criterion,
-                              pbar_str=f"Epoch {epoch + 1}/{epochs} [{loss_type}]")
+        avg_trn_loss, _ = train_step(model, loader, device, optimizer, criterion,
+                                     pbar_str=f"Epoch {epoch + 1}/{epochs} [{loss_type}]")
 
         # val step
         model.eval()
         dataset.set_val()
         loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
 
-        avg_val_loss = train_step(model, loader, device, None, criterion,
-                              pbar_str=f"Epoch {epoch + 1}/{epochs} [{loss_type}] (VAL)")
-        print(f"Epoch {epoch + 1} Complete | Avg Loss: TRN: {avg_trn_loss:.4f}  VAL: {avg_val_loss:.4f}")
+        avg_val_loss, val_data = train_step(model, loader, device, None, criterion,
+                                            pbar_str=f"Epoch {epoch + 1}/{epochs} [{loss_type}] (VAL)", collect_data=True)
+
+        genuine_mask = np.array([dataset.is_genuine(l) for l in val_data['labels']], dtype=bool)
+        enable_mmr = genuine_mask.sum() > genuine_mask.size / 2
+        if enable_mmr:
+            features_np = val_data['features'].cpu().numpy()[genuine_mask]
+            labels_np = val_data['labels'].cpu().numpy()[genuine_mask]
+            mmr = calculate_mrr_numpy(features=features_np, labels=labels_np)
+            print(f"Epoch {epoch + 1} Complete | Avg Loss: TRN: {avg_trn_loss:.4f}  VAL: {avg_val_loss:.4f}  MMR: {mmr:.4f}")
+        else:
+            print(f"Epoch {epoch + 1} Complete | Avg Loss: TRN: {avg_trn_loss:.4f}  VAL: {avg_val_loss:.4f}")
+        #
+        #print(f"Epoch {epoch + 1} Complete | Avg Loss: TRN: {avg_trn_loss:.4f}  VAL: {avg_val_loss:.4f}  MMR: {mmr:.4f}")
         trc_trn_loss.append(avg_trn_loss)
         trc_val_loss.append(avg_val_loss)
+        if enable_mmr:
+            trc_val_mmr.append(mmr)
 
         if avg_val_loss < best_loss:
             best_loss = avg_val_loss
             # Save state_dict (we'll remember to strip 'model.' later if needed)
             torch.save(model.state_dict(), output_fname)
             print(f"saving weights to {output_fname}")
+        if enable_mmr and (mmr > best_mmr):
+            best_mmr = mmr
+            output_fname_mmr = output_fname.replace('.pth', '_mmr.pth')
+            torch.save(model.state_dict(), output_fname_mmr)
+            print(f"saving weights to {output_fname_mmr}")
 
-    return model, trc_trn_loss, trc_val_loss
+    return model, trc_trn_loss, trc_val_loss, trc_val_mmr
 
 
 # for Labeled SupCon (Turtles)
@@ -254,28 +286,30 @@ def main(db_name):
     model.freeze_for_training(active_stages=[3])
 
     output_path = os.path.join(ROOT_MODELS,'mega384_crefined_{}.pth'.format(db_name))
-    _, trc_trn_loss, trc_val_loss = \
+    _, trc_trn_loss, trc_val_loss, trc_val_mmr = \
         train_contrastive(model, contrastive_ds, output_path, epochs=trn_params['epochs'], lr=trn_params['lr'],
                           loss_type=loss_type, temperature=trn_params['temperature'])
 
-    return trc_trn_loss, trc_val_loss
+    return trc_trn_loss, trc_val_loss, trc_val_mmr
 
 
 
 if __name__ == '__main__':
 
-    db_subset_selection = [0, 1]#[0, 1, 2, 3]
+    db_subset_selection = [3]#[0, 1, 2, 3]
 
     for db_name in [SUBSETS[i] for i in db_subset_selection]:
 
         start_time = time.perf_counter()
-        trc_trn_loss, trc_val_loss = main(db_name)
+        trc_trn_loss, trc_val_loss, trc_val_mmr = main(db_name)
         end_time = time.perf_counter()
         elapsed_time = end_time - start_time
         #
         fig, ax = plt.subplots(1, 1)
         ax.plot(trc_trn_loss, label='TRN {}  ({:3.1f} min.)'.format(db_name[:3], elapsed_time / 60))
         ax.plot(trc_val_loss, label='VAL ' + db_name[:3])
+        if len(trc_val_mmr) > 1:
+            ax.plot(2 - np.array(trc_val_mmr), label='2-MMR ' + db_name[:3])
         ax.set_ylim([0, 3])
         ax.grid(True)
         ax.legend()
