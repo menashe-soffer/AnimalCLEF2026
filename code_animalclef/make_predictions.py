@@ -83,7 +83,7 @@ if COMPARE_TO_BASELINE:
 # Salamander
 dset = dataset_full.get_subset(dataset_full.df['dataset'] == 'SalamanderID2025')
 features, labels = get_features_labels('SalamanderID2025', dset, use_preconpute=True)
-pred_labels, dbg = classify_Salamander(features=features, known_labels=labels, flow=0)
+pred_labels, dbg = classify_Salamander(features=features, known_labels=labels, flow=1)
 ari_score = sklearn.metrics.adjusted_rand_score(labels[labels > -1], pred_labels[labels > -1])
 print('ARI score for {}: {:4.3f}'.format('SalamanderID2025', ari_score))
 submit_df = collect_test_results(dset=dset, known_labels=labels, pred_labels=pred_labels, submit_df=submit_df)
@@ -95,7 +95,7 @@ if COMPARE_TO_BASELINE:
 # SeaTurtle
 dset = dataset_full.get_subset(dataset_full.df['dataset'] == 'SeaTurtleID2022')
 features, labels = get_features_labels('SeaTurtleID2022', dset, use_preconpute=True)
-pred_labels, dbg = classify_SeeTurtle(features=features, known_labels=labels, flow=0)
+pred_labels, dbg = classify_SeeTurtle(features=features, known_labels=labels, flow=1)
 ari_score = sklearn.metrics.adjusted_rand_score(labels[labels > 0], pred_labels[labels > 0])
 print('ARI score for {}: {:4.3f}'.format('SeaTurtleID2022', ari_score))
 submit_df = collect_test_results(dset=dset, known_labels=labels, pred_labels=pred_labels, submit_df=submit_df)

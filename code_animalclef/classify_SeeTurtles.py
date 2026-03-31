@@ -19,7 +19,7 @@ def classify_SeeTurtle(features, known_labels, flow=1):
         if flow == 1:
             # tmp_pred_labels, _ = cluster_trials(distances=distances, labels=known_labels)
             # pred_labels[~known_mask] = tmp_pred_labels[~known_mask]
-            pred_labels, _ = cluster_trials(distances=distances, labels=known_labels)
+            pred_labels, _ = cluster_trials(distances=distances, labels=known_labels, try_agl=True)
 
         return pred_labels, [' ' for l in pred_labels]
 
