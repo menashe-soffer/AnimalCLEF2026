@@ -1,19 +1,43 @@
 import torch
-import torch.nn.functional as F
 import timm
-
-
+#from pygments.lexer import include
+from transformers import AutoModel
 
 
 
 class AnimalReIDRefiner(torch.nn.Module):
-    def __init__(self, model_name="hf-hub:BVRA/MegaDescriptor-L-384", use_projector=True, projection_dim=256):
+
+
+    def load_weight_(self, model_name, weights_file):
+
+        weights = torch.load(weights_file)
+        # Create a new dictionary without the "model." prefix
+        new_weights = {}
+        for k, v in weights.items():
+            if k.startswith("model."):
+                new_weights[k[6:]] = v  # Remove 'model.' (which is 6 characters)
+            else:
+                new_weights[k] = v
+        self.model.load_state_dict(new_weights)
+
+
+
+    def __init__(self, model_name="mega384", use_projector=True, projection_dim=256, weights_file=None):
+
         super().__init__()
-        self.backbone = timm.create_model(model_name, pretrained=True)
-        self.backbone.reset_classifier(0)
+
+        if model_name == 'mega384':
+            self.backbone = timm.create_model("hf-hub:BVRA/MegaDescriptor-L-384", pretrained=True)
+        if model_name == 'mega224':
+            self.backbone = timm.create_model("hf-hub:BVRA/MegaDescriptor-L-224", pretrained=True)
+        if model_name == 'miewid':
+            self.backbone = AutoModel.from_pretrained('conservationxlabs/miewid-msv3', trust_remote_code=True)
+
+        #self.backbone.reset_classifier(0)
 
         # 4. Add the SimCLR/SupCon standard projection head
         if use_projector:
+            self.backbone.reset_classifier(0)
             input_dim = self.backbone.num_features
             self.projector = torch.nn.Sequential(
                 # torch.nn.Linear(feature_dim, feature_dim),
@@ -25,10 +49,13 @@ class AnimalReIDRefiner(torch.nn.Module):
                 torch.nn.GELU(),
                 torch.nn.Dropout(0.2),
                 # Second Layer: Compress to your 256-D SupCon space
-                torch.nn.Linear(512, 256)
+                torch.nn.Linear(512, projection_dim)
             )
         else:
             self.projector = torch.nn.Identity()
+
+        if weights_file is not None:
+            self.load_weight_(model_name, weights_file)
 
 
     def freeze_for_training(self, active_stages=[3]):
@@ -47,6 +74,6 @@ class AnimalReIDRefiner(torch.nn.Module):
         features = self.backbone(x)
         z = self.projector(features)
 
-        return torch.nn.functional.normalize(z, p=2, dim=1)
+        return z#torch.nn.functional.normalize(z, p=2, dim=1)
 
 

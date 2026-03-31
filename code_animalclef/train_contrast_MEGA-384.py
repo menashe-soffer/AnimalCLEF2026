@@ -161,7 +161,7 @@ def train_contrastive(model, dataset, output_fname, epochs=5, lr=1e-4, batch_siz
         wgt_decay = 20 * lr
     if loss_type == 'NTXent':
         criterion = NTXentLoss(temperature=temperature)
-        proj_lr = 10 * lr
+        proj_lr = 10 * lr / 4
         wgt_decay = 1 * lr
 
     backbone_params = model.backbone.parameters()  # Or your specific layers
@@ -175,7 +175,33 @@ def train_contrastive(model, dataset, output_fname, epochs=5, lr=1e-4, batch_siz
     best_mmr = -1
     trc_trn_loss, trc_val_loss, trc_val_mmr = [], [], []
 
+    # # preliminary val step
+    # # val step
+    # model.eval()
+    # dataset.set_val()
+    # loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    #
+    # best_loss, val_data = train_step(model, loader, device, None, criterion,
+    #                                     pbar_str=f"pre-train VAL", collect_data=True)
+    # trc_trn_loss.append(0)
+    # trc_val_mmr.append(best_loss)
+    #
+    # genuine_mask = np.array([dataset.is_genuine(l) for l in val_data['labels']], dtype=bool)
+    # enable_mmr = genuine_mask.sum() > genuine_mask.size / 2
+    # if enable_mmr:
+    #     features_np = val_data['features'].cpu().numpy()[genuine_mask]
+    #     labels_np = val_data['labels'].cpu().numpy()[genuine_mask]
+    #     best_mmr = calculate_mrr_numpy(features=features_np, labels=labels_np)
+    #     trc_val_mmr.append(best_mmr)
+    #
+    # print('before trining: VAL loss = {:4.3f}   VAL MMR = {:4.3f}'.format(best_loss, best_mmr))
+
     for epoch in range(epochs):
+
+        # print(f"Projector weights sum: {model.projector[0].weight.sum().item()}, {model.projector[4].weight.sum().item()}")
+        # print(f"backbone weights sum: {[param.sum().item() for param in model.backbone.layers[3].parameters()][-3:]}")
+        # print(f"backbone weights sum: {[param.sum().item() for param in model.backbone.layers[2].parameters()][-3:]}")
+
 
         # train step
         model.train()
@@ -256,7 +282,7 @@ lynx_val_transform = T.Compose([
 
 TRN_PARAMS = dict()
 TRN_PARAMS['SalamanderID2025'] = dict({'epochs': 20, 'lr': 1e-4, 'transform': None, 'loss_type': 'NTXent', 'temperature': 0.12, 'val_ratio': 0.2})
-TRN_PARAMS['SeaTurtleID2022'] = dict({'epochs': 8, 'lr': 1e-4, 'transform': weak_train_transforms, 'loss_type': 'SupCon', 'temperature': 0.07, 'val_ratio': 0.2})
+TRN_PARAMS['SeaTurtleID2022'] = dict({'epochs': 12, 'lr': 1e-4, 'transform': weak_train_transforms, 'loss_type': 'SupCon', 'temperature': 0.07, 'val_ratio': 0.2})
 TRN_PARAMS['LynxID2025'] = dict({'epochs': 8, 'lr': 1e-4, 'transform': lynx_trn_transform, 'loss_type': 'SupCon', 'temperature': 0.05, 'val_ratio': 0.2})
 TRN_PARAMS['TexasHornedLizards'] = dict({'epochs': 20, 'lr': 1e-4, 'transform': None, 'loss_type': 'NTXent', 'temperature': 0.15, 'val_ratio': 0.2})
 
@@ -282,7 +308,7 @@ def main(db_name):
     contrastive_ds.config_transforms(transforms_trn=trn_params['transform']) # set default for now
 
     # 4. Model and Training
-    model = AnimalReIDRefiner(use_projector=True)
+    model = AnimalReIDRefiner(model_name='mega384', use_projector=True)
     model.freeze_for_training(active_stages=[3])
 
     output_path = os.path.join(ROOT_MODELS,'mega384_crefined_{}.pth'.format(db_name))
@@ -296,7 +322,7 @@ def main(db_name):
 
 if __name__ == '__main__':
 
-    db_subset_selection = [3]#[0, 1, 2, 3]
+    db_subset_selection = [0, 1]#[0, 1, 2, 3]
 
     for db_name in [SUBSETS[i] for i in db_subset_selection]:
 

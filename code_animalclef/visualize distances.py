@@ -15,7 +15,11 @@ import gc
 import psutil
 from tqdm import tqdm
 
+from paths_and_constants import *
+
 from class_utils import calc_distances
+
+
 
 def print_memory():
     process = psutil.Process(os.getpid())
@@ -113,19 +117,28 @@ def visualize_distances(feat_version_names, feat_versions, labels):
 
 if __name__ == '__main__':
 
-    ROOT_FOLDER = '/media/soffer/TOSHIBA EXT/AnimalCLEF2026'
+    #ROOT_FOLDER = '/media/soffer/TOSHIBA EXT/AnimalCLEF2026'
 
-    names = ['SeaTurtleID2022', 'SalamanderID2025', 'LynxID2025', 'TexasHornedLizards']
-    model_names = ['Mega-384']#, 'DINOv2', 'sigLip']#['Mega-224', 'Mega-384', 'miewid']
-    extract_modes = ['', '_s', '_enh_rfnd', '_enh_rfnd_s']# '_blr', '_mix']
+    names = ['SalamanderID2025', 'SeaTurtleID2022', 'LynxID2025', 'TexasHornedLizards']
+    # model_names = ['Mega-384']#, 'DINOv2', 'sigLip']#['Mega-224', 'Mega-384', 'miewid']
+    # extract_modes = ['', '_s', '_enh_rfnd', '_enh_rfnd_s']# '_blr', '_mix']
+
+    feat_files = dict({'SalamanderID2025': os.path.join(ROOT_FEATURES, 'mega384_crefined_SSalamanderID2025_mmr.npz'),
+                       'SeaTurtleID2022': os.path.join(ROOT_FEATURES, 'mega384_crefined_SeaTurtleID2022_mmr.npz'),
+                       'LynxID2025': '',
+                       'TexasHornedLizards': ''})
+
 
     # dataset statistics
-    for name in names:
-        fname = os.path.join(ROOT_FOLDER, 'features', '{}_{}{}.npz'.format(name, 'Mega-384', ''))
-        data = np.load(fname)
-        labels = data['all_labels']
-        print(name, (labels > -1).sum(), (labels == -1).sum())
-        ID_size_hist = np.bincount(np.bincount(labels[labels > -1]))
+    for db_name in names:
+
+        try:
+            data = np.load(feat_files[db_name])
+            labels = data['all_labels']
+            print(db_name, (labels > -1).sum(), (labels == -1).sum())
+            ID_size_hist = np.bincount(np.bincount(labels[labels > -1]))
+        except:
+            continue
 
     # # compare different features
     # for name in names[:3]:
@@ -147,15 +160,18 @@ if __name__ == '__main__':
     # single feature model per specious
     fig, ax = plt.subplots(3, 3, figsize=(12, 12))
     #[ax[3, i1].axis('off') for i1 in range(2)]
-    model_names = ['miewid' for name in names]
-    for i, (db_name, model_name) in enumerate(zip(names, model_names)):
+    #model_names = ['miewid' for name in names]
+    for i, db_name in enumerate(names):
+        fname = feat_files[db_name]
+        if fname == '':
+            continue
+
         features_list, featues_names = [], []
-        fname = os.path.join(ROOT_FOLDER, 'features', '{}_{}.npz'.format(db_name, model_name))
         data = np.load(fname)
         features = data['all_features']
         labels = data['all_labels']
         ID_size_hist = np.bincount(np.bincount(labels[labels > -1]))
-        featues_names.append(model_name)
+        featues_names.append(fname)
         features_list.append(data['all_features'].squeeze())
 
         if i < 3:

@@ -17,17 +17,18 @@ from wildlife_tools.features import DeepFeatures
 
 from paths_and_constants import *
 from image_tools import UnderwaterEnhance
+from my_models import AnimalReIDRefiner
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # 1. Setup Model
 
-models = dict()
-models['Mega-384'] = timm.create_model("hf-hub:BVRA/MegaDescriptor-L-384", pretrained=True, num_classes=0)
-# models['Mega-224'] = timm.create_model("hf-hub:BVRA/MegaDescriptor-L-224", pretrained=True, num_classes=0)
-models['miewid'] = AutoModel.from_pretrained('conservationxlabs/miewid-msv3', trust_remote_code=True)
-models['DINOv2'] = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14')
-models['sigLip'] = timm.create_model('vit_so400m_patch14_siglip_224', pretrained=True, num_classes=0)
+# models = dict()
+# models['Mega-384'] = timm.create_model("hf-hub:BVRA/MegaDescriptor-L-384", pretrained=True, num_classes=0)
+# # models['Mega-224'] = timm.create_model("hf-hub:BVRA/MegaDescriptor-L-224", pretrained=True, num_classes=0)
+# models['miewid'] = AutoModel.from_pretrained('conservationxlabs/miewid-msv3', trust_remote_code=True)
+# models['DINOv2'] = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14')
+# models['sigLip'] = timm.create_model('vit_so400m_patch14_siglip_224', pretrained=True, num_classes=0)
 
 # the super dataset
 #DATA_ROOT = '/media/soffer/TOSHIBA EXT/AnimalCLEF2026/data'
@@ -43,88 +44,104 @@ dataset_full = AnimalCLEF2026(
 dataset_names = dataset_full.metadata['dataset'].unique()
 print(dataset_names)
 
+model_names = dict({'SalamanderID2025': 'mega384',
+                    'SeaTurtleID2022': 'mega384',
+                    'LynxID2025': 'miewid',
+                    'TexasHornedLizards': 'miewid'})
 
-for model_name in models:
+wgt_files = dict({'SalamanderID2025': None,#os.path.join(ROOT_MODELS, 'mega384_crefined_SSalamanderID2025_mmr.pth'),
+                    'SeaTurtleID2022': None,#os.path.join(ROOT_MODELS, 'mega384_crefined_SeaTurtleID2022_mmr.pth'),
+                    'LynxID2025': None,
+                    'TexasHornedLizards': None})
 
-    if model_name != 'miewid':
-        continue
+enhance_sw = dict({'SalamanderID2025': False, #True
+                    'SeaTurtleID2022': False,
+                    'LynxID2025': False,
+                    'TexasHornedLizards': False})
 
-    #print(model_name)
-    model = models[model_name]
+input_size = dict({'SalamanderID2025': (384, 384),
+                   'SeaTurtleID2022': (384, 384),
+                   'LynxID2025': (512, 512),
+                   'TexasHornedLizards': (512, 512)})
+
+output_paths = dict({'SalamanderID2025': os.path.join(ROOT_FEATURES, 'SalamanderID2025_Mega-384'),#'mega384_crefined_SSalamanderID2025_mmr'),
+                    'SeaTurtleID2022': os.path.join(ROOT_FEATURES, 'SeaTurtleID2022_Mega-384'),#'mega384_crefined_SeaTurtleID2022_mmr'),
+                    'LynxID2025': os.path.join(ROOT_FEATURES, 'LynxID2025_miewid'),
+                    'TexasHornedLizards': os.path.join(ROOT_FEATURES, 'TexasHornedLizards_miewid')})
+
+
+# for model_name, wgt_file in zip(model_names, wgt_files):
+#
+#     # # #print(model_name)
+#     # # model = models[model_name]
+#     # model = AnimalReIDRefiner(model_name, wgt_files)
+#     # model.to(device).eval()
+
+for db_name in ['SalamanderID2025', 'SeaTurtleID2022', 'LynxID2025', 'TexasHornedLizards']:
+
+    model = AnimalReIDRefiner(model_name=model_names[db_name], weights_file=wgt_files[db_name], use_projector=False)
     model.to(device).eval()
 
-    for name in dataset_names:
 
-        # if name != 'SeaTurtleID2022':
-        #     continue
+    #dataset = dataset_full.get_subset(dataset_full.df['split'] == 'train').get_subset(dataset_full.df['dataset'] == dataset_names[0])
+    dataset = dataset_full.get_subset(dataset_full.df['dataset'] == db_name)
+    ds_len = dataset.__len__()
+    print('working on {} ({}  examples) model {}'.format(db_name, ds_len, model_names[db_name]))
 
-        #
-        if model_name == 'Mega-384':
-            wgt_fname = os.path.join(ROOT_MODELS, 'mega384_refined_{}.pth'.format(name))
-            weights = torch.load(wgt_fname)
-            # Create a new dictionary without the "model." prefix
-            new_weights = {}
-            for k, v in weights.items():
-                if k.startswith("model."):
-                    new_weights[k[6:]] = v  # Remove 'model.' (which is 6 characters)
-                else:
-                    new_weights[k] = v
-            model.load_state_dict(new_weights)
-            model.to(device).eval()
-        #
+    # config = timm.data.resolve_model_data_config(model.backbone)
+    # print(config)
+    # config['crop_pct'] = 1.0
+    #
+    # transform = timm.data.create_transform(**config, is_training=False)
+    # if enhance_sw[db_name]:
+    #     dataset.set_transform(T.Compose([UnderwaterEnhance, transform]))
 
-        #dataset = dataset_full.get_subset(dataset_full.df['split'] == 'train').get_subset(dataset_full.df['dataset'] == dataset_names[0])
-        dataset = dataset_full.get_subset(dataset_full.df['dataset'] == name)
-        ds_len = dataset.__len__()
-        print('working on {} ({}  examples) model {}'.format(name, ds_len, model_name))
+    transform = T.Compose([
+        T.Resize(size=input_size[db_name]),
+        T.ToTensor(),
+        T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+    ])
+    if enhance_sw[db_name]:
+        dataset.set_transform(T.Compose([UnderwaterEnhance, transform]))
+    dataset.set_transform(transform)
+    #dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
+    #continue
 
-        config = timm.data.resolve_model_data_config(model)
-        print(config)
-        config['crop_pct'] = 1.0
-        transform = timm.data.create_transform(**config, is_training=False)
-        if name not in ['LynxID2025', 'TexasHornedLizards']:
-            dataset.set_transform(T.Compose([UnderwaterEnhance, transform]))
-        dataset.set_transform(transform)
-        #dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
-        #continue
-
-        all_features, all_labels = [], []
-        all_features_blr, all_features_mix, all_features_s = [], [], []
-        print('extracting features for {} images'.format(ds_len))
-        with torch.no_grad():
-            for idx in tqdm.tqdm(range(ds_len)):
-                img, label = dataset.__getitem__(idx)
-                all_labels.append(label)
-                # feat = model(img[np.newaxis, :, :, :].to(device)).unsqueeze(0)
-                # all_features.append(feat.cpu().numpy())
-                feat1 = model(img[np.newaxis, :, :, :].to(device)).unsqueeze(0)
-                feat2 = model(torch.flip(img[np.newaxis, :, :, :], dims=[2]).to(device)).unsqueeze(0)
-                # img_blr = F.resize(F.resize(img, (24, 24)), img.shape[1:])
-                # feat3 = model(img_blr[np.newaxis, :, :, :].to(device)).unsqueeze(0)
-                # feat4 = model(torch.flip(img_blr[np.newaxis, :, :, :], dims=[2]).to(device)).unsqueeze(0)
+    all_features, all_labels = [], []
+    all_features_blr, all_features_mix, all_features_s = [], [], []
+    print('extracting features for {} images'.format(ds_len))
+    with torch.no_grad():
+        for idx in tqdm.tqdm(range(ds_len)):
+            img, label = dataset.__getitem__(idx)
+            all_labels.append(label)
+            feat1 = model(img[np.newaxis, :, :, :].to(device)).unsqueeze(0)
+            # feat2 = model(torch.flip(img[np.newaxis, :, :, :], dims=[2]).to(device)).unsqueeze(0)
 
 
-                all_features.append((feat1 + feat2).cpu().numpy() / 2)
-                all_features_s.append((feat1 + feat2).cpu().numpy() / 2)
-                # all_features_blr.append((feat3 + feat4).cpu().numpy() / 2)
-                # all_features_mix.append((feat1 + feat2 + feat3 + feat4).cpu().numpy() / 4)
+            all_features.append(feat1.cpu().numpy())
+            # all_features.append((feat1 + feat2).cpu().numpy() / 2)
+            # all_features_s.append((feat1 + feat2).cpu().numpy() / 2)
 
-        fname = os.path.join(ROOT_FEATURES, name + '_' + model_name + '_miewid.npz')
-        os.makedirs(os.path.dirname(fname), exist_ok=True)
-        np.savez(fname, all_features=np.array(all_features), all_labels=np.array(all_labels))
-        # np.savez(fname.replace('.npz', '_blr.npz'), all_features=np.array(all_features_blr), all_labels=np.array(all_labels))
-        # np.savez(fname.replace('.npz', '_mix.npz'), all_features=np.array(all_features_mix), all_labels=np.array(all_labels))
-        np.savez(fname.replace('.npz', '_s.npz'), all_features=np.array(all_features_s), all_labels=np.array(all_labels))
+    # fname = os.path.join(ROOT_FEATURES, db_name + '_' + model_names[db_name] + '.npz')
+    fname = output_paths[db_name] + '.npz'
+    os.makedirs(os.path.dirname(fname), exist_ok=True)
+    np.savez(fname, all_features=np.array(all_features), all_labels=np.array(all_labels))
+    # np.savez(fname.replace('.npz', '_s.npz'), all_features=np.array(all_features_s), all_labels=np.array(all_labels))
 
-        torch.cuda.empty_cache()
+    torch.cuda.empty_cache()
 
-        # extractor = DeepFeatures(model=model, device='cuda', batch_size=8)
-        # all_features_ = extractor(dataset=dataset)
-        #
-        #
-        # fname = os.path.join(DATA_ROOT.replace('data', 'features'), name)# + '.npz')
-        # os.makedirs(os.path.dirname(fname), exist_ok=True)
-        # #np.savez(fname, all_features=np.array(all_features), all_labels=np.array(all_labels))
-        # import pickle
-        # with open(fname, 'wb') as fd:
-        #     pickle.dump(all_features_, fd)
+    # model = timm.create_model("hf-hub:BVRA/MegaDescriptor-L-384", pretrained=True).eval()
+    # extractor = DeepFeatures(model=model, device='cuda', batch_size=8)
+    # all_features_ = extractor(dataset=dataset)
+    #
+    # for i in range(7):
+    #     print('\n', all_features[i].squeeze()[:5])
+    #     print('\n', all_features_.features.squeeze()[i, :5])
+    #
+    #
+    # fname = os.path.join(DATA_ROOT.replace('data', 'features'), name)# + '.npz')
+    # os.makedirs(os.path.dirname(fname), exist_ok=True)
+    # #np.savez(fname, all_features=np.array(all_features), all_labels=np.array(all_labels))
+    # import pickle
+    # with open(fname, 'wb') as fd:
+    #     pickle.dump(all_features_, fd)

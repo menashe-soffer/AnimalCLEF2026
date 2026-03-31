@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
-
+import pickle
 # # 🐾 AnimalCLEF2026 Competition: Official Starter notebook
 # 
 # The **Goal of the** [AnimalCLEF2026](https://www.kaggle.com/competitions/animal-clef-2026/) competition is to cluster individual animal (loggerhead sea turtles and Texas horned lizards) in photos. This notebook visualize the provided dataset and propose a baseline solution, based on the state-of-the-art re-identification model [MegaDescriptor](https://huggingface.co/BVRA/MegaDescriptor-L-384). It also suggests some possible improvements for the participants to follow.
@@ -39,6 +39,10 @@ from sklearn.cluster import DBSCAN
 from wildlife_datasets.datasets import AnimalCLEF2026
 from wildlife_tools.features import DeepFeatures
 from wildlife_tools.similarity import CosineSimilarity
+
+import torch
+import gc
+from monitoring import print_vram_stats
 
 
 # ## 📊 Visualizing Data
@@ -95,6 +99,7 @@ datasets
 
 # In[7]:
 
+debug_dict = dict()
 
 for dataset in datasets.values():
     dataset.plot_grid(n_rows=3, n_cols=4, rotate=False);
@@ -110,7 +115,7 @@ for dataset in datasets.values():
 
 
 device = 'cuda'
-batch_size = 32
+batch_size = 8#32
 print(name)
 
 similarities = {}
@@ -118,18 +123,15 @@ for name, dataset in datasets.items():
     # Select the model for feature extraction
     print(name)
     if name in ['SalamanderID2025', 'SeaTurtleID2022']:
-        print(384)
         model = timm.create_model("hf-hub:BVRA/MegaDescriptor-L-384", pretrained=True).eval()
         size = 384
-        print(384)
     elif name in ['LynxID2025', 'TexasHornedLizards']:
-        print(512)
         model = AutoModel.from_pretrained('conservationxlabs/miewid-msv3', trust_remote_code=True)
         size = 512
-        print(512)
     else:
         raise ValueError('Name does not exist')
     print(name)
+    print_vram_stats()
 
     # Set the extractor and transform for the images
     matcher = CosineSimilarity()
@@ -144,11 +146,22 @@ for name, dataset in datasets.items():
     dataset.set_transform(transform)
     # Extract features
     features = extractor(dataset)
+    #
+    debug_dict[name] = {'features': features.features}
+    #
+    print_vram_stats()
     # Compute the similarity matrix
     similarity = matcher(features, features)
     similarities[name] = similarity
-    print(features[0][0])
-    print(similarity[0])
+    # print(features[0][0])
+    # print(similarity[0])
+    print_vram_stats()
+
+    del model
+    torch.cuda.empty_cache()
+    gc.collect()
+    print_vram_stats()
+
 
 
 # The next cell shows that TexasHornedLizards has 274 images. Each of the image has a feature vector of size 2152. The similarity matrix computes the similarity between each pair of images and therefore, it is symmetric and of size (274, 274).
@@ -177,13 +190,13 @@ def run_DBSCAN(similarity, eps):
     # Convert similarity (high is good) to distance (small is good)
     distance = (np.max(similarity) - np.maximum(similarity, 0)) / np.max(similarity)
     print(similarity.shape)
-    for i in range(274):
-        print(i, distance[i][:5])
+    # for i in range(274):
+    #     print(i, distance[i][:5])
     # Obtain predictions
     clustering = DBSCAN(eps=eps, metric='precomputed', min_samples=2)
     clusters = clustering.fit(distance)
     # Relabel -1 clusters into separate clusters
-    return relabel_negatives(clusters.labels_)
+    return relabel_negatives(clusters.labels_), [distance, clusters.labels_]
 
 
 # Now we run DBSCAN for all extracted similarity matrices and save the results. We select the parameter eps rather arbitrarily.
@@ -200,14 +213,23 @@ eps_opt = {
 }
 for name, similarity in similarities.items():
     # Save the clusters for one dataset
-    clusters = run_DBSCAN(similarity, eps_opt[name])
+    clusters, dbg = run_DBSCAN(similarity, eps_opt[name])
+    #
+    debug_dict[name]['distances'] = dbg[0]
+    debug_dict[name]['dbscan_result'] = dbg[1]
+    debug_dict[name]['labels'] = clusters
+    #
     result = pd.DataFrame({
         'image_id': datasets[name].metadata['image_id'],
         'cluster': [f'cluster_{name}_{c}' for c in clusters]
     })
     # Merge the clusters to other datasets
     results = pd.concat((results, result))
-results.to_csv('submission.csv', index=False)
+results.to_csv('/media/soffer/TOSHIBA EXT/AnimalCLEF2026/debug/submission_.csv', index=False)
+#
+with open('/media/soffer/TOSHIBA EXT/AnimalCLEF2026/debug/debug_startup_nb', 'wb') as fd:
+    pickle.dump(debug_dict, fd)
+#
 
 
 # ## Visualizing parameter eps
@@ -220,7 +242,7 @@ results.to_csv('submission.csv', index=False)
 eps_all = np.linspace(0.00001, 1, 500)
 n_clusters = []
 for eps in eps_all:
-    clusters = run_DBSCAN(similarity, eps)
+    clusters, _ = run_DBSCAN(similarity, eps)
     n_clusters.append(len(np.unique(clusters)))
 
 plt.plot(eps_all, n_clusters)

@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib
-matplotlib.use('TkAgg')
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from wildlife_datasets.datasets import AnimalCLEF2026
 import os
@@ -9,6 +9,7 @@ import sklearn.metrics
 
 from paths_and_constants import *
 from classify_SeeTurtles import classify_SeeTurtle
+from classify_Salamander import classify_Salamander
 
 
 if __name__ == '__main__':
@@ -17,19 +18,21 @@ if __name__ == '__main__':
     sw_make_val_set = True
     sw_use_only_trn = False
     sw_show_only_ids_with_mistakes = True
-    sw_save_images_to_files = True
-    db_idx = 1
+    sw_save_images_to_files = False
+    sw_show_images = False
+
+    db_idx = 0
 
     np.random.seed(1)
 
     dataset_full = AnimalCLEF2026(ROOT_DATA, transform=None, load_label=True, factorize_label=True, check_files=False)
-    feature_model_dict = {'SalamanderID2025': 'Mega-384',
-                             'SeaTurtleID2022': 'Mega-384_enh_rfnd',
+    feature_model_dict = {'SalamanderID2025': 'SalamanderID2025_Mega-384_enh_rfnd',#'SalamanderID2025_Mega-384', #'mega384_crefined_SalamanderID2025',#
+                             'SeaTurtleID2022': 'SeaTurtleID2022_Mega-384',#'SeaTurtleID2022_Mega-384_enh_rfnd',#'mega384_crefined_SeaTurtleID2022',#
                              'LynxID2025': 'Mega-384',
                              'TexasHornedLizards': 'Mega-384'}
     db_name = SUBSETS[db_idx]
     dataset = dataset_full.get_subset(dataset_full.df['dataset'] == db_name)
-    feat_fname = os.path.join(ROOT_FEATURES, '{}_{}.npz'.format(db_name, feature_model_dict[db_name]))
+    feat_fname = os.path.join(ROOT_FEATURES, feature_model_dict[db_name] + '.npz')
     data = np.load(feat_fname)
     features, all_labels = data['all_features'], data['all_labels']
     if sw_use_only_trn:
@@ -65,17 +68,25 @@ if __name__ == '__main__':
     # plt.show()
 
     if db_name == 'SalamanderID2025':
-        pass
+
+        pred_labels, dbg_strs = classify_Salamander(features=features, known_labels=labels, flow=0)
 
     if db_name == 'SeaTurtleID2022':
 
-        pred_labels, dbg_strs = classify_SeeTurtle(features=features, known_labels=labels)
+        pred_labels, dbg_strs = classify_SeeTurtle(features=features, known_labels=labels, flow=2)
+        #print(sklearn.metrics.adjusted_rand_score(labels, pred_labels))
 
     if db_name == 'LynxID2025':
         pass
 
     if db_name == 'TexasHornedLizards':
         pass
+
+    if sw_make_val_set:
+        val_cm = sklearn.metrics.confusion_matrix(all_labels[VAL_mask], pred_labels[VAL_mask])
+        val_accuracy = np.diag(val_cm).sum() / val_cm.sum()
+        print('val accuracy:', val_accuracy)
+        print('val ARI score:', sklearn.metrics.adjusted_rand_score(all_labels[VAL_mask], pred_labels[VAL_mask]))
 
 
 
@@ -87,65 +98,59 @@ if __name__ == '__main__':
         except:
             print('could not remove all files in ', save_folder)
 
-    all_ids = np.unique(np.concatenate((labels, pred_labels)))
-    for id in all_ids[all_ids > -1]:
-        true_set = id == all_labels
-        pred_set = id == pred_labels
-        pred_miss = true_set * (~pred_set)
-        pred_false = (~true_set) * pred_set
-        val_set = pred_set * VAL_mask
-        tst_set = pred_set * TST_mask
+    if sw_show_images or sw_save_images_to_files:
 
-        all_set = true_set | pred_miss | pred_false | val_set | tst_set
-        print(id, true_set.sum(), pred_miss.sum(), pred_false.sum(), val_set.sum(), tst_set.sum())
-        if (not sw_show_only_ids_with_mistakes) or (pred_miss.sum() + pred_false.sum()+ tst_set.sum() > 0):
-            fig, ax = plt.subplots(4, 6, figsize=(16, 12))
-            fig.suptitle('ID = ' + str(id))
-            if all_set.sum() > 24:
-                all_set_ = pred_miss | pred_false | val_set | tst_set
-                remaining = 24 - all_set_.sum()
-                #print(remaining, true_set.size)
-                if remaining > 0:
-                    remaining_idxs = np.random.choice(np.argwhere(true_set).flatten(), size=remaining, replace=False)
-                    all_set_[remaining_idxs] = True
-                if remaining < 0:
-                    choose_idxs = np.random.choice(np.argwhere(all_set_).flatten(), size=24, replace=False)
-                    all_set_[:] = False
-                    all_set_[choose_idxs] = True
-            else:
-                all_set_ = all_set
+        all_ids = np.unique(np.concatenate((labels, pred_labels)))
+        for id in all_ids[all_ids > -1]:
+            true_set = id == all_labels
+            pred_set = id == pred_labels
+            pred_miss = true_set * (~pred_set)
+            pred_false = (~true_set) * pred_set
+            val_set = pred_set * VAL_mask
+            tst_set = pred_set * TST_mask
 
-            [ax_.axis('off') for ax_ in ax.flatten()]
-            for ax_idx, idx  in enumerate(np.argwhere(all_set_).flatten()):
-                img, _ = dataset.__getitem__(idx)
-                ax_ = ax.flatten()[ax_idx]
-                ax_.imshow(img)
-                if val_set[idx]:
-                    ax_.set_title('VAL\n' + dbg_strs[idx])
-                if tst_set[idx]:
-                    ax_.set_title('TST\n' + dbg_strs[idx])
-                if pred_miss[idx]:
-                    ax_.set_title('miss as ' + str(pred_labels[idx]) + '\n' + dbg_strs[idx])
-                if pred_false[idx]:
-                    ax_.set_title('false; true is ' + str(all_labels[idx]) + '\n' + dbg_strs[idx])
+            all_set = true_set | pred_miss | pred_false | val_set | tst_set
+            #print(id, true_set.sum(), pred_miss.sum(), pred_false.sum(), val_set.sum(), tst_set.sum())
+            if (not sw_show_only_ids_with_mistakes) or (pred_miss.sum() + pred_false.sum()+ tst_set.sum() > 0):
+                fig, ax = plt.subplots(4, 6, figsize=(16, 12))
+                fig.suptitle('ID = ' + str(id))
+                if all_set.sum() > 24:
+                    all_set_ = pred_miss | pred_false | val_set | tst_set
+                    remaining = 24 - all_set_.sum()
+                    #print(remaining, true_set.size)
+                    if remaining > 0:
+                        remaining_idxs = np.random.choice(np.argwhere(true_set).flatten(), size=remaining, replace=False)
+                        all_set_[remaining_idxs] = True
+                    if remaining < 0:
+                        choose_idxs = np.random.choice(np.argwhere(all_set_).flatten(), size=24, replace=False)
+                        all_set_[:] = False
+                        all_set_[choose_idxs] = True
+                else:
+                    all_set_ = all_set
 
-            if sw_save_images_to_files:
-                save_path = os.path.join(save_folder, ('T' if tst_set.sum() > 0 else '') + str(id) + '.jpg')
-                fig.savefig(save_path, format="jpg", dpi=150)
-            else:
-                plt.show()
+                [ax_.axis('off') for ax_ in ax.flatten()]
+                for ax_idx, idx  in enumerate(np.argwhere(all_set_).flatten()):
+                    img, _ = dataset.__getitem__(idx)
+                    ax_ = ax.flatten()[ax_idx]
+                    ax_.imshow(img)
+                    if val_set[idx]:
+                        ax_.set_title('VAL\n' + dbg_strs[idx])
+                    if tst_set[idx]:
+                        ax_.set_title('TST\n' + dbg_strs[idx])
+                    if pred_miss[idx]:
+                        ax_.set_title('miss as ' + str(pred_labels[idx]) + '\n' + dbg_strs[idx])
+                    if pred_false[idx]:
+                        ax_.set_title('false; true is ' + str(all_labels[idx]) + '\n' + dbg_strs[idx])
+
+                if sw_save_images_to_files:
+                    save_path = os.path.join(save_folder, ('T' if tst_set.sum() > 0 else '') + str(id) + '.jpg')
+                    fig.savefig(save_path, format="jpg", dpi=150)
+                else:
+                    plt.show()
 
 
-            # CRITICAL: This is the only way to truly free the RAM in a loop
-            plt.close(fig)
-
-    # TBD deal with outlayers (-1)
-
-    if sw_make_val_set:
-        val_cm = sklearn.metrics.confusion_matrix(all_labels[VAL_mask], pred_labels[VAL_mask])
-        val_accuracy = np.diag(val_cm).sum() / val_cm.sum()
-        print('val accuracy:', val_accuracy)
-
+                # CRITICAL: This is the only way to truly free the RAM in a loop
+                plt.close(fig)
 
 
 
