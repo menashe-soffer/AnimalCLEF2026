@@ -18,7 +18,7 @@ class AnimalReIDRefiner(torch.nn.Module):
                 new_weights[k[6:]] = v  # Remove 'model.' (which is 6 characters)
             else:
                 new_weights[k] = v
-        self.model.load_state_dict(new_weights)
+        self.backbone.load_state_dict(new_weights)
 
 
 

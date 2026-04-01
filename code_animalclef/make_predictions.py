@@ -12,6 +12,8 @@ import glob
 import sklearn.metrics
 
 from paths_and_constants import *
+from model_featue_config import model_feature_config
+
 from classify_SeeTurtles import classify_SeeTurtle
 from classify_Salamander import classify_Salamander
 from classify_Lynx import classify_Lynx
@@ -19,24 +21,26 @@ from classify_Lizards import classify_Lizards
 
 
 
-# the chosen models (to make feature extraction "on the fly")
-feature_model_dict = {'SalamanderID2025': {'name': 'mega384', 'wgt_file': None},
-                      'SeaTurtleID2022': {'name': 'mega384', 'wgt_file': None},
-                      'LynxID2025': {'name': 'miewid', 'wgt_file': None},
-                      'TexasHornedLizards': {'name': 'miewid', 'wgt_file': None}}
+
+# # the chosen models (to make feature extraction "on the fly")
+# feature_model_dict = {'SalamanderID2025': {'name': 'mega384', 'wgt_file': None},
+#                       'SeaTurtleID2022': {'name': 'mega384', 'wgt_file': None},
+#                       'LynxID2025': {'name': 'miewid', 'wgt_file': None},
+#                       'TexasHornedLizards': {'name': 'miewid', 'wgt_file': None}}
+#
+#
+# # the chosen feature files
+# feature_file_dict = {'SalamanderID2025': 'SalamanderID2025_Mega-384',
+#                      'SeaTurtleID2022': 'SeaTurtleID2022_Mega-384',
+#                      'LynxID2025': 'LynxID2025_miewid',
+#                      'TexasHornedLizards': 'TexasHornedLizards_miewid'}
 
 
-# the chosen feature files
-feature_file_dict = {'SalamanderID2025': 'SalamanderID2025_Mega-384', #'SalamanderID2025_Mega-384_enh_rfnd',
-                     'SeaTurtleID2022': 'SeaTurtleID2022_Mega-384',
-                     'LynxID2025': 'LynxID2025_miewid',
-                     'TexasHornedLizards': 'TexasHornedLizards_miewid'}
 
-
-def get_features_labels(dset_name, dset, use_preconpute=True):
+def get_features_labels(feat_fname, dset, use_preconpute=True):
 
     if use_preconpute:
-        data = np.load(os.path.join(ROOT_FEATURES, feature_file_dict[dset_name] + '.npz'))
+        data = np.load(os.path.join(ROOT_FEATURES, feat_fname + '.npz'))
         features, labels = data['all_features'], data['all_labels']
     else:
         assert False
@@ -67,10 +71,16 @@ COMPARE_TO_BASELINE = False
 if COMPARE_TO_BASELINE:
     dbg_dict = dict()
 
+CONFIG = 'best' # 'baseline, 'best, 'rsrch
+config = model_feature_config()
+config.select_config_version(CONFIG)
+
+
 # Lynx
+cfg = config.get_classification_config('LynxID2025')
 dset = dataset_full.get_subset(dataset_full.df['dataset'] == 'LynxID2025')
-features, labels = get_features_labels('LynxID2025', dset, use_preconpute=True)
-pred_labels, dbg = classify_Lynx(features=features, known_labels=labels, flow=1)
+features, labels = get_features_labels(cfg['feature_file'], None, use_preconpute=True)
+pred_labels, dbg = classify_Lynx(features=features, known_labels=labels, flow=cfg['flow'])
 ari_score = sklearn.metrics.adjusted_rand_score(labels[labels > 0], pred_labels[labels > 0])
 print('ARI score for {}: {:4.3f}'.format('LynxID2025', ari_score))
 submit_df = collect_test_results(dset=dset, known_labels=labels, pred_labels=pred_labels)
@@ -81,9 +91,10 @@ if COMPARE_TO_BASELINE:
 
 
 # Salamander
+cfg = config.get_classification_config('SalamanderID2025')
 dset = dataset_full.get_subset(dataset_full.df['dataset'] == 'SalamanderID2025')
-features, labels = get_features_labels('SalamanderID2025', dset, use_preconpute=True)
-pred_labels, dbg = classify_Salamander(features=features, known_labels=labels, flow=1)
+features, labels = get_features_labels(cfg['feature_file'], None, use_preconpute=True)
+pred_labels, dbg = classify_Salamander(features=features, known_labels=labels, flow=cfg['flow'])
 ari_score = sklearn.metrics.adjusted_rand_score(labels[labels > -1], pred_labels[labels > -1])
 print('ARI score for {}: {:4.3f}'.format('SalamanderID2025', ari_score))
 submit_df = collect_test_results(dset=dset, known_labels=labels, pred_labels=pred_labels, submit_df=submit_df)
@@ -93,9 +104,10 @@ if COMPARE_TO_BASELINE:
 
 
 # SeaTurtle
+cfg = config.get_classification_config('SeaTurtleID2022')
 dset = dataset_full.get_subset(dataset_full.df['dataset'] == 'SeaTurtleID2022')
-features, labels = get_features_labels('SeaTurtleID2022', dset, use_preconpute=True)
-pred_labels, dbg = classify_SeeTurtle(features=features, known_labels=labels, flow=1)
+features, labels = get_features_labels(cfg['feature_file'], None, use_preconpute=True)
+pred_labels, dbg = classify_SeeTurtle(features=features, known_labels=labels, flow=cfg['flow'])
 ari_score = sklearn.metrics.adjusted_rand_score(labels[labels > 0], pred_labels[labels > 0])
 print('ARI score for {}: {:4.3f}'.format('SeaTurtleID2022', ari_score))
 submit_df = collect_test_results(dset=dset, known_labels=labels, pred_labels=pred_labels, submit_df=submit_df)
@@ -105,9 +117,10 @@ if COMPARE_TO_BASELINE:
 
 
 # TexasHornedLizards
+cfg = config.get_classification_config('TexasHornedLizards')
 dset = dataset_full.get_subset(dataset_full.df['dataset'] == 'TexasHornedLizards')
-features, labels = get_features_labels('TexasHornedLizards', dset, use_preconpute=True)
-pred_labels, dbg = classify_Lizards(features=features, known_labels=labels, flow=0)
+features, labels = get_features_labels(cfg['feature_file'], None, use_preconpute=True)
+pred_labels, dbg = classify_Lizards(features=features, known_labels=labels, flow=cfg['flow'])
 ari_score = sklearn.metrics.adjusted_rand_score(labels[labels > 0], pred_labels[labels > 0])
 print('ARI score for {}: {:4.3f}'.format('TexasHornedLizards', ari_score))
 submit_df = collect_test_results(dset=dset, known_labels=labels, pred_labels=pred_labels, submit_df=submit_df)

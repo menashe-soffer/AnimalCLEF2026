@@ -24,17 +24,18 @@ def classify_SeeTurtle(features, known_labels, flow=1):
         return pred_labels, [' ' for l in pred_labels]
 
 
-    if flow in [2, 3]:
-        pred_labels, eps = cluster_trials(distances=distances, labels=known_labels, try_agl=flow == 4)
-
-    if flow == 3:
-        return pred_labels, [' ' for l in pred_labels]
+    # if flow in [2, 3]:
+    #     pred_labels, eps = cluster_trials(distances=distances, labels=known_labels, try_agl=flow == 4)
+    #
+    # if flow == 3:
+    #     return pred_labels, [' ' for l in pred_labels]
 
     if flow == 2:
         labels, dbg_strs = classify_using_knowns(distances=distances, labels=known_labels)
         #assert False
         not_classified_mask = labels == -1
         #cluster(distances=distances[not_classified_mask][:, not_classified_mask])
+        _, eps = cluster_trials(distances=distances, labels=known_labels, try_agl=False)
         clabels = cluster_dbscan(distances=distances[not_classified_mask][:, not_classified_mask], eps=eps)
         start_new_label = labels.max() + 1
         print('new clusters generated from label', start_new_label)
