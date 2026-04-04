@@ -1,70 +1,57 @@
-import torch
-import torch.nn as nn
-import timm
+import matplotlib
+matplotlib.use('TkAgg')
+import matplotlib.pyplot as plt
 import torchvision.transforms as T
-
-from wildlife_datasets.datasets import AnimalCLEF2026
-
-from paths_and_constants import *
-from AnimalCLEF_triplet_dataset import AnimalCLEFTripletDataset
-from image_tools import UnderwaterEnhance
-
-
-class AnimalReIDRefiner(nn.Module):
-
-    def __init__(self, model_name="hf-hub:BVRA/MegaDescriptor-L-384"):
-        super().__init__()
-        # Load the model with its original pretrained head
-        self.model = timm.create_model(model_name, pretrained=True)
-
-    def freeze_for_training(self, active_stages=[3]):
-        """
-        Freezes the backbone except for chosen stages.
-        Swin-L has 4 stages (index 0 to 3).
-        Example: [2, 3] unfreezes the last two hierarchical stages.
-        """
-        # 1. Freeze everything initially
-        for param in self.model.parameters():
-            param.requires_grad = False
-
-        # 2. Unfreeze specific stages in the Swin backbone
-        # In timm, these are stored in self.model.layers
-        for stage_idx in active_stages:
-            print(f"Unfreezing Stage {stage_idx + 1}...")
-            for param in self.model.layers[stage_idx].parameters():
-                param.requires_grad = True
-
-        # 3. Always unfreeze the final norm and the head
-        for param in self.model.norm.parameters():
-            param.requires_grad = True
-        for param in self.model.head.parameters():
-            param.requires_grad = True
-
-    def forward(self, x):
-        # returns the embedding (original head output)
-        return self.model(x)
-
-
-import torch.optim as optim
+import torch
 from tqdm import tqdm
 import torch.nn.functional as F
+import numpy as np
+import sklearn.metrics
+from pytorch_metric_learning import miners, losses
+
+from wildlife_datasets.datasets import AnimalCLEF2026
+from AnimalCLEF_triplet_dataset import AnimalCLEFTripletDataset
+
+from paths_and_constants import *
+from my_models import AnimalReIDRefiner
+from image_tools import UnderwaterEnhance
+from model_featue_config import model_feature_config
 
 
-def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8, device='cuda'):
+
+
+def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8, weighted_data=False, device='cuda'):
 
     model.to(device)
 
     # Only optimize parameters that are NOT frozen (Stages 3/4 + Head)
-    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
+    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr, weight_decay=lr)
 
     # Standard Triplet Margin Loss
-    criterion = torch.nn.TripletMarginLoss(margin=0.3*1.5, p=2)
+    criterion = torch.nn.TripletMarginLoss(margin=0.5, p=2)
+
+    if weighted_data:
+        dataset.use_split('trn')
+        sample_freqs = dataset.get_sample_frequency()
+        sample_weights = 1.0 / np.sqrt(np.maximum(3, sample_freqs))
+
 
     best_avg_val = 999
+    best_sil_score = -1
+    trn_loss_trc, val_loss_trc, sil_score_trc = [], [], []
+    all_embeddings_list, all_labels_list = [], [] # for calculating val silhouette_score
+
+    miner = miners.TripletMarginMiner(margin=0.5, type_of_triplets="semi-hard")
+    trn_criterion = losses.TripletMarginLoss(margin=0.5)
+
     for epoch in range(epochs):
         # --- TRAINING PHASE ---
         dataset.use_split('trn')
-        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+        if weighted_data:
+            sampler = torch.utils.data.WeightedRandomSampler(weights=sample_weights, num_samples=dataset.__len__(), replacement=True)
+            loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, sampler=sampler, num_workers=4,pin_memory=True, drop_last=True)
+        else:
+            loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
 
         model.train()
         running_trn_loss = 0.0
@@ -82,7 +69,16 @@ def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8, 
             p_emb = model(positive)
             n_emb = model(negative)
 
-            loss = criterion(a_emb, p_emb, n_emb)
+            # semi-hard mining
+            anc_labels = batch['anchor_id']#torch.tensor(batch['anchor_id'])
+            neg_labels = batch['neg_id']#torch.tensor(batch['neg_id'])
+            all_embeddings = torch.cat([a_emb, p_emb, n_emb], dim=0)
+            all_embeddings = F.normalize(all_embeddings, p=2, dim=1)
+            combined_labels = torch.cat([anc_labels, anc_labels, neg_labels], dim=0)
+            indices_tuple = miner(all_embeddings, combined_labels)
+
+            #loss = criterion(a_emb, p_emb, n_emb)
+            loss = trn_criterion(all_embeddings, combined_labels, indices_tuple)
             loss.backward()
             optimizer.step()
 
@@ -91,13 +87,14 @@ def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8, 
 
         # --- VALIDATION PHASE ---
         dataset.use_split('val')
-        val_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
+        val_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False, drop_last=True)
 
         model.eval()
         running_val_loss = 0.0
 
         with torch.no_grad():
-            for batch in val_loader:
+            pbar = tqdm(val_loader, desc=f"Epoch {epoch + 1}/{epochs} [VAL]")
+            for batch in pbar:
                 a_emb = model(batch['anchor'].to(device))
                 p_emb = model(batch['positive'].to(device))
                 n_emb = model(batch['negative'].to(device))
@@ -105,53 +102,92 @@ def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8, 
                 loss = criterion(a_emb, p_emb, n_emb)
                 running_val_loss += loss.item()
 
+                # collect data for silhouette_score
+                all_embeddings_list.append(torch.cat((a_emb, p_emb, n_emb), dim=0).detach().cpu().numpy())
+                all_labels_list.append(np.concatenate((batch['anchor_id'], batch['anchor_id'], batch['neg_id'])))
+
         avg_trn = running_trn_loss / len(loader)
         avg_val = running_val_loss / len(val_loader)
 
-        print(f"Epoch {epoch + 1} Complete | TRN Loss: {avg_trn:.4f} | VAL Loss: {avg_val:.4f}")
+        sil_score = sklearn.metrics.silhouette_score(np.concatenate(all_embeddings_list, axis=0), np.concatenate(all_labels_list, axis=0), metric='cosine')
+
+        print(f"Epoch {epoch + 1} Complete | TRN Loss: {avg_trn:.4f} | VAL Loss: {avg_val:.4f} | silhouette score: {sil_score:.4f}")
+        trn_loss_trc.append(avg_trn)
+        val_loss_trc.append(avg_val)
+        sil_score_trc.append(sil_score)
 
         if avg_val < best_avg_val:
-
             # Save the specific weights
             best_avg_val = avg_val
             torch.save(model.state_dict(), output_fname)
+            print('saved', output_fname)
+        if sil_score > best_sil_score:
+            # Save the specific weights
+            best_sil_score = sil_score
+            output_fname_sil = output_fname.replace('.pth', '_sil.pth')
+            torch.save(model.state_dict(), output_fname_sil)
+            print('saved', output_fname_sil)
+
+        if epoch > 2:
+            plt.clf()
+        if epoch >= 2:
+            plt.plot(trn_loss_trc, label='TRN')
+            plt.plot(val_loss_trc, label='VAL')
+            #plt.plot((np.array(sil_score_trc) + 1) / 2, label='sil')
+            plt.plot((1 - np.array(sil_score_trc)) / 4, label='sil')
+            plt.ylim((0, 1.1 * max(np.max(trn_loss_trc), np.max(val_loss_trc), np.max(sil_score_trc))))
+            plt.grid(True)
+            plt.legend()
+            plt.show(block=False)
+            plt.pause(0.1)
 
     return model
 
 
 
 
-def main(subset_id, num_epochs=5):
+def main(dset_name, cfg, num_epochs=5, ena_singlton=False, weighted_data=True):
 
 
     # (1) Generate and configure models
-    dataset_full = AnimalCLEF2026(root=ROOT_DATA)
-    base_dataset = dataset_full.get_subset(dataset_full.df['dataset'] == SUBSETS[subset_id])
+    dataset_full = AnimalCLEF2026(
+        ROOT_DATA,
+        transform=None,
+        load_label=True,  # return label as 2nd parameter
+        factorize_label=True,  # replace string for unique integer
+        check_files=False
+    )
+    base_dataset = dataset_full.get_subset(dataset_full.df['dataset'] == dset_name)
     triplet_ds = AnimalCLEFTripletDataset()
+    triplet_ds.enable_singletons(trn_enabled=ena_singlton, val_enabled=True)
     triplet_ds.attach_dataset(base_dataset=base_dataset)
 
     # We use your generic class from before
-    model = AnimalReIDRefiner()
-    model.freeze_for_training(active_stages=[3])
+    model = AnimalReIDRefiner(model_name=cfg['model_name'], weights_file=None, use_projector=cfg['use_projector'])
+    model.freeze_for_training(active_stages=[2, 3])
 
     # (2) define transforms
     # Since you're working with 384x384 (Mega-384), we use that size.
     train_transforms = T.Compose([
-        UnderwaterEnhance,  # First, fix the visibility
-        T.Resize((384, 384)),
+        #UnderwaterEnhance,  # First, fix the visibility
+        T.Resize(cfg['size']),
         T.RandomHorizontalFlip(p=0.5),
         T.RandomRotation(15),
-        T.ColorJitter(brightness=0.2, contrast=0.2),
+        T.ColorJitter(brightness=0.12, contrast=0.12),
         T.ToTensor(),
         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
+    if cfg['enhance']:
+        train_transforms = T.Compose([UnderwaterEnhance, train_transforms])
 
     val_transforms = T.Compose([
-        UnderwaterEnhance,  # First, fix the visibility
-        T.Resize((384, 384)),
+        #UnderwaterEnhance,  # First, fix the visibility
+        T.Resize(cfg['size']),
         T.ToTensor(),
         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
+    if cfg['enhance']:
+        val_transforms = T.Compose([UnderwaterEnhance, val_transforms])
 
     # Configure transforms (using the ones we discussed earlier)
     triplet_ds.config_trn_transforms(train_transforms)
@@ -159,19 +195,24 @@ def main(subset_id, num_epochs=5):
 
     # (4) Refine Specifically for Turtles
     # You might want to filter the base_ds to turtles ONLY before this step
-    print("\n--- Starting {} Refinement ---".format(SUBSETS[subset_id]))
-    output_fname = os.path.join(ROOT_MODELS,'mega384_refined_{}_trplt.pth'.format(SUBSETS[subset_id]))
-    refined_model = train_model(model, triplet_ds, output_fname, epochs=num_epochs)
+    print("\n--- Starting {} Refinement ---".format(dset_name))
+    output_fname = os.path.join(ROOT_MODELS,'{}.pth'.format(cfg['wgt_file']))
+    refined_model = train_model(model=model, dataset=triplet_ds, output_fname=output_fname, epochs=num_epochs, weighted_data=weighted_data, lr=cfg['lr'])
 
     # # Save the specific weights
-    # torch.save(refined_model.state_dict(), os.path.join(ROOT_MODELS,'mega384_refined_{}.pth'.format(SUBSETS[subset_id])))
-
-
+    output_fname_final = output_fname.replace('.pth', '_final.pth')
+    torch.save(refined_model.state_dict(), output_fname_final)
+    print('saved', output_fname_final)
 
 
 if __name__ == '__main__':
 
-    main(subset_id=0, num_epochs=12)
-    #main(subset_id=1, num_epochs=7)
-    main(subset_id=2, num_epochs=12)
+    dset_name = 'LynxID2025'
+
+    config = model_feature_config()
+    config.select_config_version('rsrch')
+    train_cfg = config.get_training_config(dset_name)
+    main(dset_name, train_cfg, ena_singlton=True, weighted_data=True, num_epochs=25)
+
+    plt.show() # hold the plot
 

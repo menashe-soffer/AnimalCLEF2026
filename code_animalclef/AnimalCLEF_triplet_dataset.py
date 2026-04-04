@@ -10,106 +10,6 @@ from paths_and_constants import *
 from image_tools import UnderwaterEnhance
 
 
-# class AnimalCLEFTripletDataset(Dataset):
-#     def __init__(self):
-#         self.df = None
-#         self.base_dataset = None
-#         self.transform = None
-#         self.trn_transform = None
-#         self.val_transform = None
-#         self.split = 'trn'
-#         self.anchors = []
-#         self.id_to_indices = {}
-#
-#     def attach_dataset(self, base_dataset):
-#         """
-#         Wraps an existing AnimalCLEF dataset.
-#         Expects base_dataset.df to have ['individual_id', 'is_train']
-#         """
-#         self.base_dataset = base_dataset
-#         self.df = base_dataset.df
-#
-#         # 1. Separate TRN and VAL (assuming is_train is a boolean or 0/1)
-#         # You can adjust this logic if your split is handled differently
-#         self.full_train_df = self.df[self.df['split'] == 'train'].copy()
-#
-#         # 2. Map every ID to its list of row indices for fast lookup
-#         self.id_to_indices = self.full_train_df.groupby('identity').indices
-#
-#         # 3. Filter Anchors: Only IDs with > 1 example are valid
-#         self.valid_ids = [id_ for id_, idxs in self.id_to_indices.items() if len(idxs) > 1]
-#
-#         # 4. Create a consistent list of all possible anchor images
-#         # An anchor is any image belonging to a valid_id
-#         self.all_anchor_indices = self.full_train_df[
-#             self.full_train_df['identity'].isin(self.valid_ids)
-#         ].index.tolist()
-#
-#         # 5. Simple 80/20 split for TRN/VAL
-#         random.seed(42)
-#         random.shuffle(self.all_anchor_indices)
-#         split_idx = int(len(self.all_anchor_indices) * 0.8)
-#
-#         self.trn_anchors = self.all_anchor_indices[:split_idx]
-#         self.val_anchors = self.all_anchor_indices[split_idx:]
-#
-#         print(f"Dataset Attached: {len(self.trn_anchors)} TRN anchors, {len(self.val_anchors)} VAL anchors.")
-#
-#     def config_trn_transforms(self, transforms):
-#         self.trn_transform = transforms
-#
-#     def config_val_transforms(self, transforms):
-#         self.val_transform = transforms
-#
-#     def use_split(self, split):
-#         self.split = split
-#         self.anchors = self.trn_anchors if split == 'trn' else self.val_anchors
-#         self.transform = self.trn_transform if split == 'trn' else self.val_transform
-#
-#     def __len__(self):
-#         return len(self.anchors)
-#
-#     def __getitem__(self, idx):
-#         # 1. Get Anchor
-#         anchor_idx = self.anchors[idx]
-#         anchor_row = self.df.loc[anchor_idx]
-#         anchor_id = anchor_row['identity']
-#
-#         # 2. Pick Positive (Same ID, different image)
-#         pos_options = self.id_to_indices[anchor_id]
-#         # Filter out the anchor itself from options
-#         pos_options = [i for i in pos_options if i != anchor_idx]
-#         pos_idx = random.choice(pos_options)
-#
-#         # 3. Pick Negative (Different ID)
-#         # We pick a random ID that isn't the anchor_id
-#         neg_id = random.choice(list(self.id_to_indices.keys()))
-#         while neg_id == anchor_id:
-#             neg_id = random.choice(list(self.id_to_indices.keys()))
-#
-#         neg_idx = random.choice(self.id_to_indices[neg_id])
-#
-#         # 4. Load and Transform images
-#         # Assuming your base_dataset has a method to load image by index
-#         anchor_img = self.base_dataset.get_image(anchor_idx)
-#         pos_img = self.base_dataset.get_image(pos_idx)
-#         neg_img = self.base_dataset.get_image(neg_idx)
-#
-#         if self.transform:
-#             anchor_img = self.transform(anchor_img)
-#             pos_img = self.transform(pos_img)
-#             neg_img = self.transform(neg_img)
-#
-#         return {
-#             'anchor': anchor_img,
-#             'positive': pos_img,
-#             'negative': neg_img,
-#             'anchor_id': anchor_id,
-#             'neg_id': neg_id
-#         }
-
-
-
 
 
 
@@ -147,49 +47,55 @@ class AnimalCLEFTripletDataset(Dataset):
         self._prepare_anchors()
 
     def _prepare_anchors(self):
-        # Use the clean integers from the base_dataset.labels ndarray
         labels_array = self.base_dataset.labels
-
-        # Identify which split name to use (e.g., 'train')
         actual_splits = self.df['split'].unique()
         target_split = 'train' if 'train' in actual_splits else actual_splits[0]
 
-        # Filter IDs based on singleton policy (using the global map we built)
-        if self.include_singletons:
-            valid_ids = set(self.id_to_indices.keys())
+        # 1. Define valid IDs for Train
+        if self.trn_singletons:
+            trn_valid_ids = set(self.id_to_indices.keys())
         else:
-            valid_ids = {id_ for id_, count in self.id_counts.items() if count > 1}
+            trn_valid_ids = {id_ for id_, count in self.id_counts.items() if count > 1}
 
-        # Create the anchor pool by checking both the split and the ID
-        # We iterate indices to keep it aligned with base_dataset.labels
-        self.all_anchor_indices = [
+        # 2. Define valid IDs for Val
+        if self.val_singletons:
+            val_valid_ids = set(self.id_to_indices.keys())
+        else:
+            val_valid_ids = {id_ for id_, count in self.id_counts.items() if count > 1}
+
+        # 3. Separate the pools using their specific valid_id sets
+        # Note: We still use 'target_split' to find the initial training pool,
+        # but for re-id we often split that pool further into trn/val anchors.
+        all_pool_indices = [
             i for i, (split_val, lbl) in enumerate(zip(self.df['split'], labels_array))
-            if split_val == target_split and int(lbl) in valid_ids
+            if split_val == target_split
         ]
 
-        # Perform the 80/20 split on the pool
         random.seed(42)
-        random.shuffle(self.all_anchor_indices)
-        split_idx = int(len(self.all_anchor_indices) * 0.8)
+        random.shuffle(all_pool_indices)
+        split_idx = int(len(all_pool_indices) * 0.8)
 
-        self.trn_anchors = self.all_anchor_indices[:split_idx]
-        self.val_anchors = self.all_anchor_indices[split_idx:]
+        # Filter the split indices by their respective singleton rules
+        self.trn_anchors = [i for i in all_pool_indices[:split_idx]
+                            if int(labels_array[i]) in trn_valid_ids]
 
-        print(f"Prepared {len(self.trn_anchors)} train and {len(self.val_anchors)} val anchors.")
+        self.val_anchors = [i for i in all_pool_indices[split_idx:]
+                            if int(labels_array[i]) in val_valid_ids]
 
+        print(f"Prepared {len(self.trn_anchors)} trn and {len(self.val_anchors)} val anchors.")
 
-
-    def enable_singletons(self, enabled: bool):
+    def enable_singletons(self, trn_enabled: bool, val_enabled: bool):
         """
-        Toggle whether to include singleton IDs (IDs with only 1 image).
-        If enabled, the positive image for a singleton anchor will be an
-        augmented version of the anchor itself.
+        Independent control for singletons.
+        Commonly: trn_enabled=True (for more data) and val_enabled=False (for cleaner metrics).
         """
-        self.include_singletons = enabled
-        # If the dataset is already attached, we refresh the anchor lists to reflect the change
+        self.trn_singletons = trn_enabled
+        self.val_singletons = val_enabled
+
         if self.base_dataset is not None:
-            self.attach_dataset(self.base_dataset)
-
+            self._prepare_anchors()
+            # Refresh the active anchor pointer
+            self.use_split(self.split)
 
 
     def config_trn_transforms(self, transforms):
@@ -248,6 +154,31 @@ class AnimalCLEFTripletDataset(Dataset):
             'neg_id': torch.tensor(neg_label, dtype=torch.long)
         }
 
+    def __get_id_frequencies(self):
+        """
+        Returns the unique IDs currently active in the current split
+        and the frequency (count) of anchors associated with each ID.
+        """
+        if self.anchors is None or len(self.anchors) == 0:
+            return [], []
+
+        # Get the labels for only the currently active anchors
+        # base_dataset.labels is the ndarray of ints
+        active_labels = self.base_dataset.labels[self.anchors]
+
+        # Use numpy to get unique IDs and their counts in the active set
+        ids, freq = np.unique(active_labels, return_counts=True)
+
+        return ids.tolist(), freq.tolist()
+
+    def get_sample_frequency(self):
+
+        id_list, id_freq = self.__get_id_frequencies()
+        anc_labels = [int(self.base_dataset.labels[i]) for i in self.anchors]
+        id_to_freq = dict(zip(id_list, id_freq))
+        anc_freqs = [id_to_freq[lbl] for lbl in anc_labels]
+
+        return anc_freqs
 
 
 if __name__ == '__main__':
@@ -293,7 +224,7 @@ if __name__ == '__main__':
 
         print("Initializing Triplet Dataset...")
         triplet_ds = AnimalCLEFTripletDataset()
-        triplet_ds.enable_singletons(True)
+        triplet_ds.enable_singletons(trn_enabled=True, val_enabled=True)
         triplet_ds.attach_dataset(base_dataset)  # 'base_dataset' is your original class
         #triplet_ds.enable_singletons(True)
 
