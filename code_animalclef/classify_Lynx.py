@@ -12,7 +12,16 @@ def classify_Lynx(features, known_labels, flow=0):
         return pred_labels, [distances[~known_mask][:, ~known_mask], dbg]
 
     if flow == 1:
-        pred_labels, eps = cluster_trials(distances=distances, labels=known_labels, try_agl=True)
+        pred_labels, eps = cluster_trials(distances=distances, labels=known_labels, try_agl=False, eps_range=[0.01, 0.5])
+
+    if flow == 2:
+        pred_labels, eps = cluster_trials(distances=distances, labels=known_labels, try_agl=False, eps_range=[0.001, 0.05], min_samples_list=[10])
+        big_ids = np.argwhere(np.bincount(pred_labels) > 100).flatten()
+        mask = np.array([p in big_ids for p in pred_labels], dtype=bool)
+        sub_distances = distances[~mask][:, ~mask]
+        sub_pred_labels, eps = cluster_trials(distances=sub_distances, labels=known_labels[~mask], try_agl=True, eps_range=[0.01, 0.5])
+        pred_labels[~mask] = sub_pred_labels
+
 
     return pred_labels, [' ' for l in pred_labels]
 

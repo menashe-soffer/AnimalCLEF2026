@@ -38,51 +38,20 @@ dataset_full = AnimalCLEF2026(
 dataset_names = dataset_full.metadata['dataset'].unique()
 print(dataset_names)
 
-# model_names = dict({'SalamanderID2025': 'mega384',
-#                     'SeaTurtleID2022': 'mega384',
-#                     'LynxID2025': 'miewid',
-#                     'TexasHornedLizards': 'miewid'})
-#
-# wgt_files = dict({'SalamanderID2025': None,#os.path.join(ROOT_MODELS, 'mega384_crefined_SSalamanderID2025_mmr.pth'),
-#                     'SeaTurtleID2022': None,#os.path.join(ROOT_MODELS, 'mega384_crefined_SeaTurtleID2022_mmr.pth'),
-#                     'LynxID2025': None,
-#                     'TexasHornedLizards': None})
-#
-# enhance_sw = dict({'SalamanderID2025': False, #True
-#                     'SeaTurtleID2022': False,
-#                     'LynxID2025': False,
-#                     'TexasHornedLizards': False})
-#
-# input_size = dict({'SalamanderID2025': (384, 384),
-#                    'SeaTurtleID2022': (384, 384),
-#                    'LynxID2025': (512, 512),
-#                    'TexasHornedLizards': (512, 512)})
-#
-# output_paths = dict({'SalamanderID2025': os.path.join(ROOT_FEATURES, 'SalamanderID2025_Mega-384'),#'mega384_crefined_SSalamanderID2025_mmr'),
-#                     'SeaTurtleID2022': os.path.join(ROOT_FEATURES, 'SeaTurtleID2022_Mega-384'),#'mega384_crefined_SeaTurtleID2022_mmr'),
-#                     'LynxID2025': os.path.join(ROOT_FEATURES, 'LynxID2025_miewid'),
-#                     'TexasHornedLizards': os.path.join(ROOT_FEATURES, 'TexasHornedLizards_miewid')})
 
 
-# for model_name, wgt_file in zip(model_names, wgt_files):
-#
-#     # # #print(model_name)
-#     # # model = models[model_name]
-#     # model = AnimalReIDRefiner(model_name, wgt_files)
-#     # model.to(device).eval()
-
-
-CONFIG = 'best' # 'baseline, 'best, 'rsrch
+CONFIG = 'rsrch' # 'baseline, 'best, 'rsrch'
 config = model_feature_config()
 config.select_config_version(CONFIG)
 
 
-for db_name in ['SalamanderID2025', 'SeaTurtleID2022', 'LynxID2025', 'TexasHornedLizards']:
+for db_name in ['SalamanderID2025', 'SeaTurtleID2022', 'LynxID2025', 'TexasHornedLizards'][2:3]:
 
     cfg = config.get_embedding_config(db_name)
 
     #model = AnimalReIDRefiner(model_name=model_names[db_name], weights_file=wgt_files[db_name], use_projector=False)
-    model = AnimalReIDRefiner(model_name=cfg['model_name'], weights_file=cfg['wgt_file'], use_projector=False)
+    wgt_file = weights_file=os.path.join(ROOT_MODELS, cfg['wgt_file'] + '.pth') if cfg['wgt_file'] is not None else None
+    model = AnimalReIDRefiner(model_name=cfg['model_name'], weights_file=wgt_file, use_projector=cfg['use_projector'])
     model.to(device).eval()
 
 

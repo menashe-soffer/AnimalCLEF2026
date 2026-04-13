@@ -15,6 +15,9 @@ import gc
 import psutil
 from tqdm import tqdm
 
+from wildlife_datasets.datasets import AnimalCLEF2026
+
+
 from paths_and_constants import *
 
 from class_utils import calc_distances
@@ -31,7 +34,7 @@ def print_memory():
 
 
 
-def visualize_distances(feat_version_names, feat_versions, labels):
+def visualize_distances(feat_version_names, feat_versions, labels, mark_labels=None):
 
     def evaluate_contrast(distances, labels):
 
@@ -56,11 +59,11 @@ def visualize_distances(feat_version_names, feat_versions, labels):
     plot_rows = int(np.ceil(np.sqrt(num_versions)))
     plot_cols = int(np.ceil(num_versions / plot_rows))
 
-    fig, ax = plt.subplots(plot_rows, 2 * plot_cols, figsize=(16, 12), sharex=False, sharey=False)
+    fig, ax = plt.subplots(plot_rows, 3 * plot_cols, figsize=(16, 12), sharex=False, sharey=False)
     ax1 = ax[:, :plot_cols] if plot_rows > 1 else ax[:plot_cols]
     ax2 = ax[:, plot_cols:] if plot_rows > 1 else ax[plot_cols:]
 
-    display_distances, display_hists = [], []
+    display_distances, display_hists, trn_label_list = [], [], []
     for i in range(num_versions):
         #print_memory()
         trn_labels, _, _, _, distances_trn_trn, _, _, _ = calc_distances(feat_versions[i], labels, metric='similarity')
@@ -71,7 +74,22 @@ def visualize_distances(feat_version_names, feat_versions, labels):
         #print_memory()
         reorder = np.argsort(trn_labels_)
         distances_trn_trn_ = distances_trn_trn_[reorder][:, reorder]
-        sns.heatmap(distances_trn_trn_[:1000, :1000], ax=ax1.flatten()[i], square=True)
+        trn_labels_ = trn_labels_[reorder]
+        trn_label_list.append(trn_labels_)
+        #
+        if ids_to_mark is not None:
+            for i_grp, id in enumerate(ids_to_mark):
+                mask = trn_labels_[reorder] == id
+                distances_trn_trn_[mask, :8] = distances_trn_trn_.max() * i_grp / len(ids_to_mark)
+                distances_trn_trn_[mask, 8:16] = 1 - distances_trn_trn_.max() * i_grp / len(ids_to_mark)
+                distances_trn_trn_[mask, 16:24] = distances_trn_trn_.max() * i_grp / len(ids_to_mark)
+                distances_trn_trn_[mask, 24:32] = 1 - distances_trn_trn_.max() * i_grp / len(ids_to_mark)
+                distances_trn_trn_[mask][:, mask] = 1.2
+                for i1 in np.argwhere(mask).flatten():
+                    for i2 in np.argwhere(mask).flatten():
+                        distances_trn_trn_[i1, i2] = 1.2
+        #
+        sns.heatmap(distances_trn_trn_[:3000, :3000], ax=ax1.flatten()[i], square=True)
         display_distances.append(distances_trn_trn_)
         #print_memory()
         contrast, inner, outer = evaluate_contrast(distances_trn_trn_, trn_labels_)
@@ -103,16 +121,37 @@ def visualize_distances(feat_version_names, feat_versions, labels):
         ax2.flatten()[i].plot((x_inner[:-1] + x_inner[1:]) / 2, h_inner / h_inner.sum())
         ax2.flatten()[i].plot((x_outer[:-1] + x_outer[1:]) / 2, h_outer / h_outer.sum())
         ax2.flatten()[i].set_title(feat_version_names[i] + ' (S)\n' + str(np.round(contrast, decimals=2)) + '  {:5.3f} / {:5.3f}'.format(inner, outer))
+        ax2.flatten()[i+1].plot((x_inner[:-1] + x_inner[1:]) / 2, np.cumsum(h_inner) / h_inner.sum())
+        ax2.flatten()[i+1].plot((x_outer[:-1] + x_outer[1:]) / 2, np.cumsum(h_outer) / h_outer.sum())
+        ax2.flatten()[i + 1].grid(True)
+        #ax2.flatten()[i].set_title(feat_version_names[i] + ' (S)\n' + str(np.round(contrast, decimals=2)) + '  {:5.3f} / {:5.3f}'.format(inner, outer))
         display_hists.append([[(x_inner[:-1] + x_inner[1:]) / 2, h_inner / h_inner.sum()], [(x_outer[:-1] + x_outer[1:]) / 2, h_outer / h_outer.sum()]])
         #
         feat_versions[i] = None
         gc.collect()
         #print_memory()
 
-    return fig, display_distances, display_hists
+    return fig, display_distances, display_hists, trn_label_list
 
 
+# search for IDs wirh large number of samples
+def show_diminant_IDs(dataset):
 
+    counts = np.bincount(dataset.labels[dataset.labels > -1])
+    ordered = np.argsort(counts)[::-1]
+    [print(id, counts[id]) for id in ordered[:20]]
+    fig, ax = plt.subplots(4, 5, figsize=(16, 12))
+    [ax_.axis('off') for ax_ in ax.flatten()]
+    for col_id, id in enumerate(ordered[:5]):
+        ax[0, col_id].set_title('ID {}'.format(id))
+        idxs = np.random.choice(np.argwhere(dataset.labels == id).flatten(), 4)
+        for row_id, idx in enumerate(idxs):
+            img, label = dataset[idx]
+            assert label == id
+            ax[row_id, col_id].imshow(img)
+    plt.show(block=False)
+
+    return ordered
 
 
 if __name__ == '__main__':
@@ -123,14 +162,15 @@ if __name__ == '__main__':
     # model_names = ['Mega-384']#, 'DINOv2', 'sigLip']#['Mega-224', 'Mega-384', 'miewid']
     # extract_modes = ['', '_s', '_enh_rfnd', '_enh_rfnd_s']# '_blr', '_mix']
 
-    feat_files = dict({'SalamanderID2025': os.path.join(ROOT_FEATURES, 'mega384_crefined_SSalamanderID2025_mmr.npz'),
+    feat_files = dict({'SalamanderID2025': os.path.join(ROOT_FEATURES, 'SalamanderID2025_Mega-384.npz'),
                        'SeaTurtleID2022': os.path.join(ROOT_FEATURES, 'mega384_crefined_SeaTurtleID2022_mmr.npz'),
-                       'LynxID2025': '',
+                       #'LynxID2025': os.path.join(ROOT_FEATURES, 'LynxID2025_resnet.cls.npz'),#os.path.join(ROOT_FEATURES, 'LynxID2025_Mega-384_rfnd.npz'),#
+                       'LynxID2025': os.path.join(ROOT_MODELS, 'Lynx models', 'model 5', 'LynxID2025_resnet.npz'),
                        'TexasHornedLizards': ''})
 
 
     # dataset statistics
-    for db_name in names:
+    for db_name in names[2:3]:
 
         try:
             data = np.load(feat_files[db_name])
@@ -157,11 +197,23 @@ if __name__ == '__main__':
     # plt.show()
 
 
+    dataset_full = AnimalCLEF2026(
+        ROOT_DATA,
+        transform=None,
+        load_label=True,  # return label as 2nd parameter
+        factorize_label=True,  # replace string for unique integer
+        check_files=False
+    )
+    base_dataset = dataset_full.get_subset(dataset_full.df['dataset'] == db_name)
+    ids_to_mark = show_diminant_IDs(dataset=base_dataset)
+    ids_to_mark = []#[1, 26, 10, 21, 25]
+
+
     # single feature model per specious
     fig, ax = plt.subplots(3, 3, figsize=(12, 12))
     #[ax[3, i1].axis('off') for i1 in range(2)]
     #model_names = ['miewid' for name in names]
-    for i, db_name in enumerate(names):
+    for i, db_name in enumerate(names[2:3]):
         fname = feat_files[db_name]
         if fname == '':
             continue
@@ -174,8 +226,47 @@ if __name__ == '__main__':
         featues_names.append(fname)
         features_list.append(data['all_features'].squeeze())
 
+        #
+        # ID packing (lynx)
+        big_id_list = [1, 26, 5, 8, 10, 23, 21, 14, 27, 40, 9, 25, 4, 20, 16, 6]
+        CLASSIFIER = True
+        if CLASSIFIER:
+            for i1 in range(len(labels)):
+                if labels[i1] != -1:
+                    if (not labels[i1] in big_id_list):# or (labels[i1] == -1):
+                        labels[i1] = 0
+                    else:
+                        #print(i1, labels[i1])
+                        labels[i1] = int(np.argwhere(labels[i1] == big_id_list).squeeze()) + 1
+            #
+            dtct = np.argmax(features.squeeze(), axis=1)
+            from sklearn.metrics import confusion_matrix
+
+            cm = confusion_matrix(labels, dtct)
+            fig_cm, ax_cm = plt.subplots(1, 1)
+            sns.heatmap(cm, annot=True, fmt='d', xticklabels=np.unique(labels),
+                                    yticklabels=np.unique(labels))
+            acc = np.diag(cm[1:][:, 1:]).sum() / cm[1:][:, 1:].sum()
+            fig_cm.suptitle('accuracy (on train examples) = {:5.2f}'.format(acc))
+            #
+            # document detections of test
+            test_dtct_list = dict()
+            test_idxs = np.argwhere(labels == -1).flatten().astype(int)
+            test_dtcts = np.argmax(features.squeeze(), axis=1)[test_idxs]
+            for id in np.unique(labels[labels > -1]):
+                if id > 0:
+                    id_pos = np.argwhere(test_dtcts == id).flatten().astype(int)
+                    print('{} ({}) :\t'.format(id, len(id_pos)), id_pos)
+                    test_dtct_list[id] = id_pos
+
+        else:
+            # remove labels
+            for i1 in range(len(labels)):
+                if labels[i1] in big_id_list:
+                    labels[i1] = -1
+
         if i < 3:
-            _, distances, hists = visualize_distances(feat_version_names=featues_names, feat_versions=features_list, labels=labels)
+            _, distances, hists, trn_label = visualize_distances(feat_version_names=featues_names, feat_versions=features_list, labels=labels)
             ax[i, 0].axis('off')
             sns.heatmap(distances[0][:1000, :1000], ax=ax[i, 0], square=True)
             ax[i, 2].set_ylabel(db_name[:-4][:12])
@@ -184,6 +275,16 @@ if __name__ == '__main__':
             ID_size_hist = np.bincount(np.bincount(labels[labels > -1]))
             ax[i, 2].bar(np.arange(ID_size_hist.size), ID_size_hist)
             #ax[i, 2].legend('{} trn, {} test'.format((labels > -1).sum(), (labels == -1).sum()))
-    plt.show()
 
+            # bad IDs analysis
+            for id in np.unique(trn_label[0]):
+                mask_in = trn_label[0] == id
+                mask_out = trn_label[0] != id
+                max_dist_in = distances[0][mask_in][:, mask_in].max()
+                min_dist_out = np.median(distances[0][mask_in][:, mask_out])
+                if (min_dist_out < 0.2) and (mask_in.sum() > 50):#(max_dist_in > min_dist_out) or (min_dist_out < 0.2):
+                    print(id, mask_in.sum(), max_dist_in, min_dist_out)
+    plt.show()
+    fig, ax = plt.subplots(4, 5, figsize=(16, 12))
+    [ax_.set_axis('off') for ax_ in ax.flatten()]
 

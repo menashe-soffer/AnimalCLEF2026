@@ -127,7 +127,7 @@ def fill_outlayers(labels):
     return labels
 
 
-def cluster_trials(distances, labels, try_agl=False):
+def cluster_trials(distances, labels, try_agl=False, eps_range=[0.1, 0.5], min_samples_list=[2, 3, 4]):
 
     # try both dbscan and agglomerative, scan parameters, and chose the one that gives best ARI for known labels
     # unknown labels are -1
@@ -137,8 +137,8 @@ def cluster_trials(distances, labels, try_agl=False):
 
     best_ari_score = -1
 
-    for eps in np.arange(start=0.1, stop=0.5, step=0.01):
-        for min_samples in [2, 3, 4]:
+    for eps in np.arange(start=eps_range[0], stop=eps_range[-1], step=0.01):
+        for min_samples in min_samples_list:
 
             clustering = sklearn.cluster.DBSCAN(eps=eps, metric='precomputed', min_samples=min_samples)
             clusters = clustering.fit(distances)

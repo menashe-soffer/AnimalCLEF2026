@@ -7,7 +7,7 @@ import random
 from wildlife_datasets.datasets import AnimalCLEF2026
 
 from paths_and_constants import *
-from image_tools import UnderwaterEnhance
+from image_tools import UnderwaterEnhance, TextureHarvest, AddGaussianNoise
 
 
 
@@ -28,9 +28,18 @@ class AnimalCLEFTripletDataset(Dataset):
         self.val_transform = None
         self.split = 'trn'
 
-    def attach_dataset(self, base_dataset):
+    def attach_dataset(self, base_dataset, max_allowed_class_size=None, exclude_ID_list=[], merge_IDs_not_in=[], include_test=True):
         self.base_dataset = base_dataset
         self.df = base_dataset.df
+
+        # merge IDs
+        if len(merge_IDs_not_in) > 0:
+            new_ID = 0#np.max(merge_IDs_not_in) + 1
+            for i in range(len(self.base_dataset.labels)):
+                if self.base_dataset.labels[i] in merge_IDs_not_in:
+                    self.base_dataset.labels[i] = int(np.argwhere(self.base_dataset.labels[i] == merge_IDs_not_in).squeeze()) + 1
+                else:
+                    self.base_dataset.labels[i] = new_ID if self.base_dataset.labels[i] > -1 else self.base_dataset.labels[i]
 
         # 1. Build Global ID-to-Indices Map from the labels array
         self.id_to_indices = {}
@@ -39,17 +48,64 @@ class AnimalCLEFTripletDataset(Dataset):
             if l_int not in self.id_to_indices:
                 self.id_to_indices[l_int] = []
             self.id_to_indices[l_int].append(idx)
+        if not include_test:
+            self.id_to_indices.pop(-1)
 
         # 2. Build Frequencies
         self.id_counts = {k: len(v) for k, v in self.id_to_indices.items()}
 
-        # 3. Prepare the pools
-        self._prepare_anchors()
+        # 4. Prepare the pools
+        self._prepare_anchors(max_allowed_class_size=max_allowed_class_size, exclude_ID_list=exclude_ID_list)
 
-    def _prepare_anchors(self):
+
+
+    def _generate_all_pool_indices(self, max_id_size=None, include_test=False, exclude_ID_list=[]):
+        """
+        Creates a balanced or full list of indices to serve as anchors.
+
+        Args:
+            max_id_size (int, optional): The 'Chop' limit. If set, IDs with more
+                                         samples will be randomly downsampled.
+            include_test (bool): If False, ignores indices mapped to label -1.
+
+        Returns:
+            list: A flat list of indices for the anchor pool.
+        """
+        all_pool_indices = []
+
+        # We iterate over the pre-built id_to_indices map for speed
+        for lbl, indices in self.id_to_indices.items():
+
+            # 1. Handle the test/noise split
+            if lbl == -1 and not include_test:
+                continue
+
+            # 2. Handle the Exclude List
+            if lbl in exclude_ID_list:
+                continue
+
+            # 3. Convert to list to allow for sampling
+            current_indices = list(indices)
+
+            # 4. Apply the 'Chop' (max_id_size)
+            if max_id_size is not None and len(current_indices) > max_id_size:
+                # random.sample is perfect here: it's without replacement
+                # and ensures diversity within the cluster
+                current_indices = random.sample(current_indices, max_id_size)
+
+            all_pool_indices.extend(current_indices)
+
+        # 5. Final Shuffle
+        # Essential so that a single batch isn't filled with 12 images of the same ID
+        random.shuffle(all_pool_indices)
+
+        return all_pool_indices
+
+
+
+    def _prepare_anchors(self, max_allowed_class_size=None, exclude_ID_list=[], include_test=True):
+
         labels_array = self.base_dataset.labels
-        actual_splits = self.df['split'].unique()
-        target_split = 'train' if 'train' in actual_splits else actual_splits[0]
 
         # 1. Define valid IDs for Train
         if self.trn_singletons:
@@ -66,10 +122,17 @@ class AnimalCLEFTripletDataset(Dataset):
         # 3. Separate the pools using their specific valid_id sets
         # Note: We still use 'target_split' to find the initial training pool,
         # but for re-id we often split that pool further into trn/val anchors.
-        all_pool_indices = [
-            i for i, (split_val, lbl) in enumerate(zip(self.df['split'], labels_array))
-            if split_val == target_split
-        ]
+        # all_pool_indices = [
+        #     i for i, (split_val, lbl) in enumerate(zip(self.df['split'], labels_array))
+        #     if split_val == target_split
+        # ]
+        all_pool_indices = self._generate_all_pool_indices(max_id_size=max_allowed_class_size,
+                                                           include_test=False, exclude_ID_list=exclude_ID_list)
+
+        # Log the result so you can see the 'Chop' worked
+        print(f"--- Anchor Pool Prepared ---")
+        print(f"Total Anchors: {len(all_pool_indices)}")
+        print(f"Unique IDs: {len(set(self.base_dataset.labels[all_pool_indices]))}")
 
         random.seed(42)
         random.shuffle(all_pool_indices)
@@ -83,6 +146,7 @@ class AnimalCLEFTripletDataset(Dataset):
                             if int(labels_array[i]) in val_valid_ids]
 
         print(f"Prepared {len(self.trn_anchors)} trn and {len(self.val_anchors)} val anchors.")
+
 
     def enable_singletons(self, trn_enabled: bool, val_enabled: bool):
         """
@@ -154,6 +218,13 @@ class AnimalCLEFTripletDataset(Dataset):
             'neg_id': torch.tensor(neg_label, dtype=torch.long)
         }
 
+
+    ###############################################################################
+    #
+    # THE FOLLOWING METHOD INTENDED TO SUPPORT NON-TRIVIAL SAMPLING OF THE DATA
+    #
+    ###############################################################################
+
     def __get_id_frequencies(self):
         """
         Returns the unique IDs currently active in the current split
@@ -181,6 +252,22 @@ class AnimalCLEFTripletDataset(Dataset):
         return anc_freqs
 
 
+    def get_anchor_idxs_and_ids(self):
+        """Returns (indices, labels) for the active split."""
+        if self.anchors is None:
+            return [], []
+
+        # Get the labels for these specific indices
+        active_labels = [int(self.base_dataset.labels[i]) for i in self.anchors]
+
+        # Both self.anchors and active_labels are now the same length
+        return self.anchors, active_labels
+
+
+
+
+
+
 if __name__ == '__main__':
 
     import torch
@@ -194,16 +281,18 @@ if __name__ == '__main__':
     # Since you're working with 384x384 (Mega-384), we use that size.
     train_transforms = T.Compose([
         UnderwaterEnhance,  # First, fix the visibility
-        T.Resize((384, 384)),
+        T.Resize((512, 512)),
         T.RandomHorizontalFlip(p=0.5),
         T.RandomRotation(15),
         T.ColorJitter(brightness=0.12, contrast=0.12),
         T.ToTensor(),
+        # TextureHarvest(),
+        # AddGaussianNoise(),
         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
     val_transforms = T.Compose([
-        UnderwaterEnhance,  # First, fix the visibility
+        #UnderwaterEnhance,  # First, fix the visibility
         T.Resize((384, 384)),
         T.ToTensor(),
         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -225,7 +314,7 @@ if __name__ == '__main__':
         print("Initializing Triplet Dataset...")
         triplet_ds = AnimalCLEFTripletDataset()
         triplet_ds.enable_singletons(trn_enabled=True, val_enabled=True)
-        triplet_ds.attach_dataset(base_dataset)  # 'base_dataset' is your original class
+        triplet_ds.attach_dataset(base_dataset)#, merge_IDs_not_in=[1, 26, 5, 8, 10, 23, 21, 14, 27])  # 'base_dataset' is your original class
         #triplet_ds.enable_singletons(True)
 
         # --- 3. Configure Splits and Transforms ---

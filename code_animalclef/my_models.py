@@ -3,6 +3,7 @@ import torch
 import timm
 #from pygments.lexer import include
 from transformers import AutoModel
+import torchvision
 
 from paths_and_constants import *
 
@@ -31,23 +32,31 @@ class AnimalReIDRefiner(torch.nn.Module):
 
         if model_name == 'mega384':
             self.backbone = timm.create_model("hf-hub:BVRA/MegaDescriptor-L-384", pretrained=True)
+            self.backbone.reset_classifier(0)
         if model_name == 'mega224':
             self.backbone = timm.create_model("hf-hub:BVRA/MegaDescriptor-L-224", pretrained=True)
+            self.backbone.reset_classifier(0)
         if model_name == 'miewid':
             self.backbone = AutoModel.from_pretrained('conservationxlabs/miewid-msv3', trust_remote_code=True)
+        if model_name == 'resnet':
+            self.backbone = torchvision.models.resnet18(weights='IMAGENET1K_V1')
+            self.backbone.fc = torch.nn.Identity()
+        if model_name == 'effnet':
+            self.backbone = torchvision.models.efficientnet_b0(weights='IMAGENET1K_V1')
 
-        #self.backbone.reset_classifier(0)
+
 
         # 4. Add the SimCLR/SupCon standard projection head
         if use_projector:
             #self.backbone.reset_classifier(0)
             self.projector = torch.nn.Sequential(
+                torch.nn.BatchNorm1d(512),
+                torch.nn.Dropout(p=0.5),
                 torch.nn.LazyLinear(512),
                 torch.nn.BatchNorm1d(512),
                 torch.nn.GELU(),
-                torch.nn.Dropout(0.2),
-                # Second Layer: Compress to your 256-D SupCon space
-                torch.nn.Linear(512, projection_dim)
+                torch.nn.Dropout(p=0.2),
+                torch.nn.LazyLinear(projection_dim)
             )
         else:
             self.projector = torch.nn.Identity()
@@ -64,7 +73,10 @@ class AnimalReIDRefiner(torch.nn.Module):
             param.requires_grad = False
             num_stages += 1
         if num_stages > 5:
-            active_stages = np.arange(start=int(0.95 * num_stages), stop=num_stages)
+            # # meanwhile undo, TDB
+            # for param in self.backbone.parameters():
+            #     param.requires_grad = True
+            return
         try:
             for stage_idx in active_stages:
                 for param in self.backbone.layers[stage_idx].parameters():
@@ -77,6 +89,7 @@ class AnimalReIDRefiner(torch.nn.Module):
             for stage_idx, param in enumerate(self.backbone.parameters()):
                 if stage_idx in active_stages:
                     param.requires_grad = True
+
 
     def forward(self, x):
 

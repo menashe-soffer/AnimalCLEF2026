@@ -71,7 +71,7 @@ COMPARE_TO_BASELINE = False
 if COMPARE_TO_BASELINE:
     dbg_dict = dict()
 
-CONFIG = 'best' # 'baseline, 'best, 'rsrch
+CONFIG = 'rsrch' # 'baseline, 'best, 'rsrch'
 config = model_feature_config()
 config.select_config_version(CONFIG)
 

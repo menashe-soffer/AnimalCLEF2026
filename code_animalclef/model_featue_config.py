@@ -27,7 +27,8 @@ class model_feature_config:
                 'wgt_file': cfg['wgt_file'],
                 'enhance': cfg['enhance'],
                 'use_projector': cfg['use_projector'],
-                'size': cfg['size']
+                'size': cfg['size'],
+                'lr': cfg['lr']
                 }
 
 
@@ -136,34 +137,37 @@ class model_feature_config:
 # --------------------------------------------------------------------------------------
 
     rsrch_config['SalamanderID2025'] = dict({'model_name': 'mega384',
-                                                'wgt_file': None,
+                                                'wgt_file': 'SalamanderID2025_Mega-384_rfnd',
                                                 'enhance': False,
-                                                'use_projector': False,
+                                                'use_projector': True,
                                                 'size': (384, 384),
+                                                'lr': 1e-4,
                                                 'feat_file': 'SalamanderID2025_Mega-384',
                                                 'flow': 1 # clustering with brute-force grid search
                                                 })
 
     rsrch_config['SeaTurtleID2022'] = dict({'model_name': 'mega384',
-                                                'wgt_file': None,
+                                                'wgt_file': 'SeaTurtleID2022_Mega-384_rfnd',
                                                 'enhance': False,
-                                                'use_projector': False,
+                                                'use_projector': True,
                                                 'size': (384, 384),
+                                                'lr': 1e-4,
                                                 'feat_file': 'SeaTurtleID2022_Mega-384',
                                                 'flow': 1 # clustering with brute-force grid search
                                                 })
 
-    rsrch_config['LynxID2025'] = dict({'model_name': 'miewid',
-                                                'wgt_file': None,
-                                                'enhance': False,
-                                                'use_projector': False,
-                                                'size': (512, 512),
-                                                'feat_file': 'LynxID2025_miewid',
+    rsrch_config['LynxID2025'] = dict({'model_name': 'resnet',
+                                                'wgt_file': 'LynxID2025_resnet',
+                                                'enhance': True,
+                                                'use_projector': True,
+                                                'size': (512, 512),#(384, 384),#
+                                                'lr': 1e-4,
+                                                'feat_file': 'LynxID2025_resnet',
                                                 'flow': 1 # clustering with brute-force grid search
                                                 })
 
     rsrch_config['TexasHornedLizards'] = dict({'model_name': 'miewid',
-                                                'wgt_file': None,
+                                                'wgt_file': 'TexasHornedLizards_Mega-384_rfnd',
                                                 'enhance': False,
                                                 'use_projector': False,
                                                 'size': (512, 512),
