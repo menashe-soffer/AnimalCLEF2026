@@ -40,7 +40,7 @@ print(dataset_names)
 
 
 
-CONFIG = 'rsrch' # 'baseline, 'best, 'rsrch'
+CONFIG = 'rsrch' # 'baseline', 'best, 'rsrch'
 config = model_feature_config()
 config.select_config_version(CONFIG)
 
@@ -51,7 +51,9 @@ for db_name in ['SalamanderID2025', 'SeaTurtleID2022', 'LynxID2025', 'TexasHorne
 
     #model = AnimalReIDRefiner(model_name=model_names[db_name], weights_file=wgt_files[db_name], use_projector=False)
     wgt_file = weights_file=os.path.join(ROOT_MODELS, cfg['wgt_file'] + '.pth') if cfg['wgt_file'] is not None else None
-    model = AnimalReIDRefiner(model_name=cfg['model_name'], weights_file=wgt_file, use_projector=cfg['use_projector'])
+    model = AnimalReIDRefiner(model_name=cfg['model_name'], weights_file=wgt_file,
+                              use_projector=cfg['use_projector'], projection_dim=384,
+                              use_marg=True, marg_num_clases=63)
     model.to(device).eval()
 
 
@@ -79,25 +81,27 @@ for db_name in ['SalamanderID2025', 'SeaTurtleID2022', 'LynxID2025', 'TexasHorne
     #dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
     #continue
 
-    all_features, all_labels = [], []
-    all_features_blr, all_features_mix, all_features_s = [], [], []
+    all_features, all_labels, all_embeddings = [], [], []
+    #all_features_blr, all_features_mix, all_features_s = [], [], []
     print('extracting features for {} images'.format(ds_len))
     with torch.no_grad():
         for idx in tqdm.tqdm(range(ds_len)):
             img, label = dataset.__getitem__(idx)
             all_labels.append(label)
             feat1 = model(img[np.newaxis, :, :, :].to(device)).unsqueeze(0)
+            emb = model.get_embedding()
             # feat2 = model(torch.flip(img[np.newaxis, :, :, :], dims=[2]).to(device)).unsqueeze(0)
 
 
             all_features.append(feat1.cpu().numpy())
+            all_embeddings.append(emb.cpu().numpy())
             # all_features.append((feat1 + feat2).cpu().numpy() / 2)
             # all_features_s.append((feat1 + feat2).cpu().numpy() / 2)
 
     # fname = os.path.join(ROOT_FEATURES, db_name + '_' + model_names[db_name] + '.npz')
     fname = os.path.join(ROOT_FEATURES, cfg['feat_file'] + '.npz')
     os.makedirs(os.path.dirname(fname), exist_ok=True)
-    np.savez(fname, all_features=np.array(all_features), all_labels=np.array(all_labels))
+    np.savez(fname, all_features=np.array(all_features), all_labels=np.array(all_labels), all_embeddings=np.array(all_embeddings))
     # np.savez(fname.replace('.npz', '_s.npz'), all_features=np.array(all_features_s), all_labels=np.array(all_labels))
 
     torch.cuda.empty_cache()

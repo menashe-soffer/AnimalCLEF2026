@@ -28,7 +28,9 @@ class AnimalCLEFTripletDataset(Dataset):
         self.val_transform = None
         self.split = 'trn'
 
-    def attach_dataset(self, base_dataset, max_allowed_class_size=None, exclude_ID_list=[], merge_IDs_not_in=[], include_test=True):
+    def attach_dataset(self, base_dataset, max_allowed_class_size=None,
+                       exclude_ID_list=[], merge_IDs_not_in=[],
+                       include_test=True, split_point=0.8):
         self.base_dataset = base_dataset
         self.df = base_dataset.df
 
@@ -55,7 +57,7 @@ class AnimalCLEFTripletDataset(Dataset):
         self.id_counts = {k: len(v) for k, v in self.id_to_indices.items()}
 
         # 4. Prepare the pools
-        self._prepare_anchors(max_allowed_class_size=max_allowed_class_size, exclude_ID_list=exclude_ID_list)
+        self._prepare_anchors(max_allowed_class_size=max_allowed_class_size, exclude_ID_list=exclude_ID_list, split_point=split_point)
 
 
 
@@ -85,6 +87,7 @@ class AnimalCLEFTripletDataset(Dataset):
                 continue
 
             # 3. Convert to list to allow for sampling
+            #print('adding {} indices for label {}'.format(len(indices), lbl))
             current_indices = list(indices)
 
             # 4. Apply the 'Chop' (max_id_size)
@@ -103,7 +106,7 @@ class AnimalCLEFTripletDataset(Dataset):
 
 
 
-    def _prepare_anchors(self, max_allowed_class_size=None, exclude_ID_list=[], include_test=True):
+    def _prepare_anchors(self, max_allowed_class_size=None, exclude_ID_list=[], split_point=0.8):
 
         labels_array = self.base_dataset.labels
 
@@ -136,7 +139,7 @@ class AnimalCLEFTripletDataset(Dataset):
 
         random.seed(42)
         random.shuffle(all_pool_indices)
-        split_idx = int(len(all_pool_indices) * 0.8)
+        split_idx = int(len(all_pool_indices) * split_point)
 
         # Filter the split indices by their respective singleton rules
         self.trn_anchors = [i for i in all_pool_indices[:split_idx]

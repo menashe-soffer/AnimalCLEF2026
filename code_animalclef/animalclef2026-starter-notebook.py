@@ -53,7 +53,7 @@ from monitoring import print_vram_stats
 
 
 #root = '/kaggle/input/animal-clef-2026'
-root = '/media/soffer/TOSHIBA EXT/AnimalCLEF2026/data'
+root = '~/kaggle/AnimalCLEF2026/data'
 from wildlife_datasets import datasets
 #datasets.AnimalCLEF2026.get_data(root)
 dataset = datasets.AnimalCLEF2026(root)

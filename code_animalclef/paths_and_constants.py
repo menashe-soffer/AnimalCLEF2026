@@ -1,8 +1,8 @@
 import os
 
-ROOT = '/media/soffer/TOSHIBA EXT/AnimalCLEF2026'
+ROOT = os.path.expanduser('/home/soffer/kaggle/AnimalCLEF2026')
 #ROOT_DATA = os.path.join(ROOT, 'data')
-ROOT_DATA = '/home/soffer/temp/AnimalCLEF2026_cache/data'
+ROOT_DATA = os.path.join(ROOT, 'data')
 ROOT_FEATURES = os.path.join(ROOT, 'features')
 ROOT_DEBUG = os.path.join(ROOT, 'debug')
 ROOT_MODELS = os.path.join(ROOT, 'model')

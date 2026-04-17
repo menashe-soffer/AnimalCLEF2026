@@ -7,6 +7,34 @@ import torchvision
 
 from paths_and_constants import *
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class SubCenterLinear(nn.Module):
+
+    def __init__(self, in_features, out_features, k=3):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.k = k
+        # Weight shape: [num_classes * k, feature_dim]
+        self.weight = nn.Parameter(torch.FloatTensor(out_features * k, in_features))
+        nn.init.xavier_uniform_(self.weight)
+
+    def forward(self, x):
+        # 1. Normalize the inputs and the weights (Cosine Similarity)
+        cosine = F.linear(F.normalize(x), F.normalize(self.weight))
+
+        # 2. Reshape to separate the K centers: [Batch, Classes, K]
+        cosine = cosine.view(-1, self.out_features, self.k)
+
+        # 3. The "Policy": Pick the best center for each class
+        cosine, _ = torch.max(cosine, dim=2)
+
+        return cosine
+
 
 
 class AnimalReIDRefiner(torch.nn.Module):
@@ -26,7 +54,8 @@ class AnimalReIDRefiner(torch.nn.Module):
 
 
 
-    def __init__(self, model_name="mega384", use_projector=True, projection_dim=256, weights_file=None):
+    def __init__(self, model_name="mega384", use_projector=True, projection_dim=256, weights_file=None,
+                 use_marg=False, marg_num_clases=None, marg_K=None):
 
         super().__init__()
 
@@ -60,6 +89,13 @@ class AnimalReIDRefiner(torch.nn.Module):
             )
         else:
             self.projector = torch.nn.Identity()
+
+        if use_marg:
+            self.marg = SubCenterLinear(in_features=projection_dim, out_features=marg_num_clases)
+        else:
+            self.marg = torch.nn.Identity()
+
+
 
         if weights_file is not None:
             weights = torch.load(os.path.join(ROOT_MODELS, weights_file))
@@ -95,8 +131,14 @@ class AnimalReIDRefiner(torch.nn.Module):
 
         features = self.backbone(x)
         z = self.projector(features)
+        self.keep_embed = z
+        logits = self.marg(z)
 
-        return torch.nn.functional.normalize(z, p=2, dim=1)#z#
+        return logits
+
+    def get_embedding(self):
+
+        return self.keep_embed
 
 
 
