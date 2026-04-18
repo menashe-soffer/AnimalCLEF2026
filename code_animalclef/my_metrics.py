@@ -51,7 +51,7 @@ class HybridLoss(torch.nn.Module):
         # --- 3. Final Weighted Combination ---
         total_loss = loss_arc + (self.triplet_weight * loss_triplet)
 
-        return total_loss
+        return total_loss, loss_arc, loss_triplet
 
 
 

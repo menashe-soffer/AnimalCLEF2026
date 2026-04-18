@@ -43,6 +43,8 @@ def call_model(model, batch, device):
     labels = torch.cat([anc_labels, anc_labels, neg_labels], dim=0)
 
     return logits, embeds, labels
+    #return logits, F.normalize(embeds, p=2, dim=1), labels
+
 
 
 
@@ -76,7 +78,8 @@ def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8+4
 
     best_avg_val = 999
     best_sil_score = -1
-    trn_loss_trc, val_loss_trc, sil_score_trc, mines_triplets_count_trc, accuracy_score_trc = [], [], [], [], []
+    trn_loss_trc, val_loss_trc, sil_score_trc_val, sil_score_trc_aux, mines_triplets_count_trc, accuracy_score_trc = [], [], [], [], [], []
+    arc_loss_trc, triplet_loss_trc = [], []
 
 
     for epoch in range(epochs):
@@ -109,6 +112,7 @@ def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8+4
 
         model.train()
         running_trn_loss = 0.0
+        running_arc_loss, running_triplet_loss = 0.0, 0.0
 
         num_steps = int(dataset.__len__() / batch_size)
         step = 0
@@ -119,7 +123,7 @@ def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8+4
 
             batch_logits, batch_embeds, batch_labels = call_model(model=model, batch=batch, device='cuda')
             if as_classifier:
-                loss = criterion(batch_labels, batch_logits, batch_embeds)
+                loss, loss_arc, loss_triplet = criterion(batch_labels, batch_logits, batch_embeds)
             else:
                 loss = criterion(a_emb, p_emb, n_emb)
 
@@ -131,9 +135,13 @@ def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8+4
                 optimizer.zero_grad()
 
             running_trn_loss += loss.item()
+            running_arc_loss += loss_arc.item()
+            running_triplet_loss += loss_triplet.item()
             pbar.set_postfix({'loss': f"{loss.item():.4f}"})
 
         avg_trn = running_trn_loss / len(loader)
+        avg_arc = running_arc_loss / len(loader)
+        avg_triplet = running_triplet_loss / len(loader)
 
         # --- VALIDATION PHASE ---
         dataset.use_split('val')
@@ -149,7 +157,7 @@ def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8+4
                 batch_logits, batch_embeds, batch_labels = call_model(model=model, batch=batch, device='cuda')
 
                 if as_classifier:
-                    loss = criterion(batch_labels, batch_logits, batch_embeds)
+                    loss, _, _ = criterion(batch_labels, batch_logits, batch_embeds)
                 else:
                     loss = criterion(a_emb, p_emb, n_emb)
 
@@ -166,7 +174,7 @@ def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8+4
         if aux_dataset is not None:
             aux_dataset.use_split('val')
             aux_embeddings_list, aux_labels_list = [], []
-            aux_loader = torch.utils.data.DataLoader(aux_dataset, batch_size=4, shuffle=False, drop_last=True)
+            aux_loader = torch.utils.data.DataLoader(aux_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
             with torch.no_grad():
                 pbar = tqdm(aux_loader, desc=f"Epoch {epoch + 1}/{epochs} [AUX]")
                 for batch in pbar:
@@ -188,20 +196,29 @@ def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8+4
             detect = np.argmax(all_logits_list[0], axis=1).flatten()
             cm = sklearn.metrics.confusion_matrix(all_labels_list[0], detect)
             accuracy = np.diag(cm).sum() / cm.sum()
-            sil_score = sklearn.metrics.silhouette_score(np.concatenate(aux_embeddings_list, axis=0),
+            sil_score_val = sklearn.metrics.silhouette_score(np.concatenate(all_embeddings_list, axis=0),
+                                                         np.concatenate(all_labels_list, axis=0), metric='cosine')
+            sil_score_aux = sklearn.metrics.silhouette_score(np.concatenate(aux_embeddings_list, axis=0),
                                                          np.concatenate(aux_labels_list, axis=0), metric='cosine')
 
         if as_classifier:
-            print(f"Epoch {epoch + 1} Complete | TRN Loss: {avg_trn:.4f} | VAL Loss: {avg_val:.4f} | accuracy score: {accuracy:.4f} | silhouette score: {sil_score:.4f}")
+            #print(f"Epoch {epoch + 1} Complete | TRN Loss: {avg_trn:.4f} | VAL Loss: {avg_val:.4f} | accuracy score: {accuracy:.4f} | silhouette score: (VAL) {sil_score_val:.4f} (AUX) {sil_score_aux:.4f}")
+            print(f"Epoch {epoch + 1} Complete | TRN Loss: {avg_trn:.4f} | " \
+                  f"VAL Loss: {avg_val:.4f} | accuracy score: {accuracy:.4f} | " \
+                  f"silhouette score: (VAL) {sil_score_val:.4f} (AUX) {sil_score_aux:.4f}")
         else:
-            print(f"Epoch {epoch + 1} Complete | TRN Loss: {avg_trn:.4f} | VAL Loss: {avg_val:.4f} | silhouette score: {sil_score:.4f}")
+            print(f"Epoch {epoch + 1} Complete | TRN Loss: {avg_trn:.4f} | VAL Loss: {avg_val:.4f} | silhouette score: (VAL) {sil_score_val:.4f} (AUX) {sil_score_aux:.4f}")
             print('avg num (mined) triplets per anchor:', num_triplets / (num_steps * batch_size))
+        arc_loss_trc.append(avg_arc)
+        triplet_loss_trc.append(avg_triplet)
         trn_loss_trc.append(avg_trn)
         val_loss_trc.append(avg_val)
-        sil_score_trc.append(sil_score)
+        sil_score_trc_val.append(sil_score_val)
+        sil_score_trc_aux.append(sil_score_aux)
         accuracy_score_trc.append(accuracy)
         mines_triplets_count_trc.append(num_triplets / (num_steps * batch_size))
 
+        sil_score = sil_score_aux
         if avg_val < best_avg_val:
             # Save the specific weights
             best_avg_val = avg_val
@@ -225,10 +242,13 @@ def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8+4
             #plt.plot((np.array(sil_score_trc) + 1) / 2, label='sil')
             if as_classifier:
                 plt.plot(np.array(accuracy_score_trc), label='accuracy')
-                plt.plot(sil_score_trc, label='silhouette')
+                plt.plot(sil_score_trc_aux, label='silhouette (AUX)')
+                plt.plot(sil_score_trc_val, label='silhouette (VAL)', linestyle=':')
+                plt.plot(arc_loss_trc, label='loss - ARC', linestyle=':')
+                plt.plot(triplet_loss_trc, label='loss - triplet',  linestyle=':')
             if not as_classifier:
-                plt.plot((1 - np.array(sil_score_trc)) / 4, label='(1-sil)/4')
-            plt.ylim((0, min(0.6+1.4*as_classifier, 1.1 * max(np.max(trn_loss_trc), np.max(val_loss_trc), np.max(sil_score_trc)))))
+                plt.plot((1 - np.array(sil_score_trc_val)) / 4, label='(1-sil)/4')
+            plt.ylim((0, min(0.6+1.4*as_classifier, 1.1 * max(np.max(trn_loss_trc), np.max(val_loss_trc)))))
             plt.grid(True)
             plt.legend()
             # plt.show(block=False)

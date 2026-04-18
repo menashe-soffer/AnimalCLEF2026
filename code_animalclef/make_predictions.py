@@ -37,16 +37,20 @@ from classify_Lizards import classify_Lizards
 
 
 
-def get_features_labels(feat_fname, dset, use_preconpute=True):
+def get_features_labels(feat_fname, dset, use_precompute=True):
 
-    if use_preconpute:
+    if use_precompute:
         data = np.load(os.path.join(ROOT_FEATURES, feat_fname + '.npz'))
         features, labels = data['all_features'], data['all_labels']
+        try:
+            embeddings = data['all_embeddings']
+        except:
+            embeddings = features
     else:
         assert False
         # TBD extract features and labels
 
-    return features.squeeze(), labels
+    return features.squeeze(), embeddings.squeeze(), labels
 
 
 def collect_test_results(dset, known_labels, pred_labels, submit_df=None):
@@ -56,6 +60,7 @@ def collect_test_results(dset, known_labels, pred_labels, submit_df=None):
 
     idxs = np.argwhere(known_labels == -1).flatten().astype(int)
     image_ids = dset.metadata['image_id'][idxs]
+    print('found {} distinct IDs in {} test images'.format(np.unique(pred_labels[idxs]).size, len(idxs)))
     clusters = ['cluster_{}_{}'.format(dset.metadata['dataset'][i], pred_labels[i]) for i in idxs]
     add_df = pd.DataFrame({'image_id': image_ids, 'cluster': clusters})
     submit_df = add_df if submit_df is None else pd.concat((submit_df, add_df))
@@ -71,15 +76,16 @@ COMPARE_TO_BASELINE = False
 if COMPARE_TO_BASELINE:
     dbg_dict = dict()
 
-CONFIG = 'rsrch' # 'baseline', 'best, 'rsrch'
+CONFIG = 'best' # 'baseline', 'best', 'rsrch'
 config = model_feature_config()
 config.select_config_version(CONFIG)
 
 
 # Lynx
+print('\n\nLynx:')
 cfg = config.get_classification_config('LynxID2025')
 dset = dataset_full.get_subset(dataset_full.df['dataset'] == 'LynxID2025')
-features, labels = get_features_labels(cfg['feature_file'], None, use_preconpute=True)
+features, embeddings, labels = get_features_labels(cfg['feature_file'], None, use_precompute=True)
 pred_labels, dbg = classify_Lynx(features=features, known_labels=labels, flow=cfg['flow'])
 ari_score = sklearn.metrics.adjusted_rand_score(labels[labels > 0], pred_labels[labels > 0])
 print('ARI score for {}: {:4.3f}'.format('LynxID2025', ari_score))
@@ -91,10 +97,11 @@ if COMPARE_TO_BASELINE:
 
 
 # Salamander
+print('\n\nSalamander:')
 cfg = config.get_classification_config('SalamanderID2025')
 dset = dataset_full.get_subset(dataset_full.df['dataset'] == 'SalamanderID2025')
-features, labels = get_features_labels(cfg['feature_file'], None, use_preconpute=True)
-pred_labels, dbg = classify_Salamander(features=features, known_labels=labels, flow=cfg['flow'])
+features, embeddings, labels = get_features_labels(cfg['feature_file'], None, use_precompute=True)
+pred_labels, dbg = classify_Salamander(features=embeddings, known_labels=labels, flow=cfg['flow'])
 ari_score = sklearn.metrics.adjusted_rand_score(labels[labels > -1], pred_labels[labels > -1])
 print('ARI score for {}: {:4.3f}'.format('SalamanderID2025', ari_score))
 submit_df = collect_test_results(dset=dset, known_labels=labels, pred_labels=pred_labels, submit_df=submit_df)
@@ -104,9 +111,10 @@ if COMPARE_TO_BASELINE:
 
 
 # SeaTurtle
+print('\n\nSeaTurtle:')
 cfg = config.get_classification_config('SeaTurtleID2022')
 dset = dataset_full.get_subset(dataset_full.df['dataset'] == 'SeaTurtleID2022')
-features, labels = get_features_labels(cfg['feature_file'], None, use_preconpute=True)
+features, embeddings, labels = get_features_labels(cfg['feature_file'], None, use_precompute=True)
 pred_labels, dbg = classify_SeeTurtle(features=features, known_labels=labels, flow=cfg['flow'])
 ari_score = sklearn.metrics.adjusted_rand_score(labels[labels > 0], pred_labels[labels > 0])
 print('ARI score for {}: {:4.3f}'.format('SeaTurtleID2022', ari_score))
@@ -117,9 +125,10 @@ if COMPARE_TO_BASELINE:
 
 
 # TexasHornedLizards
+print('\n\nTexasHornedLizards:')
 cfg = config.get_classification_config('TexasHornedLizards')
 dset = dataset_full.get_subset(dataset_full.df['dataset'] == 'TexasHornedLizards')
-features, labels = get_features_labels(cfg['feature_file'], None, use_preconpute=True)
+features, embeddings, labels = get_features_labels(cfg['feature_file'], None, use_precompute=True)
 pred_labels, dbg = classify_Lizards(features=features, known_labels=labels, flow=cfg['flow'])
 ari_score = sklearn.metrics.adjusted_rand_score(labels[labels > 0], pred_labels[labels > 0])
 print('ARI score for {}: {:4.3f}'.format('TexasHornedLizards', ari_score))
