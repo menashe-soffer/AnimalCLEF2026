@@ -90,6 +90,7 @@ def visualize_distances(feat_version_names, feat_versions, labels, mark_labels=N
                         distances_trn_trn_[i1, i2] = 1.2
         #
         sns.heatmap(distances_trn_trn_[:3000, :3000], ax=ax1.flatten()[i], square=True)
+        sns.heatmap(distances_trn_trn_[-3000:, -3000:], ax=ax1.flatten()[i], square=True)
         display_distances.append(distances_trn_trn_)
         #print_memory()
         contrast, inner, outer = evaluate_contrast(distances_trn_trn_, trn_labels_)
@@ -110,8 +111,8 @@ def visualize_distances(feat_version_names, feat_versions, labels, mark_labels=N
             #print(len(inner_distances), mask.shape, mask.sum())
             inner_distances = np.concatenate((inner_distances, distances_trn_trn[mask][:, mask].flatten()))
             outer_distances = np.concatenate((outer_distances, distances_trn_trn[mask][:, ~mask].flatten()))
-        h_inner, x_inner = np.histogram(inner_distances, bins=np.linspace(start=0, stop=1, num=51))
-        h_outer, x_outer = np.histogram(outer_distances, bins=np.linspace(start=0, stop=1, num=51))
+        h_inner, x_inner = np.histogram(inner_distances, bins=np.linspace(start=0, stop=1, num=21))
+        h_outer, x_outer = np.histogram(outer_distances, bins=np.linspace(start=0, stop=1, num=21))
         # print(inner_distances.size, inner_distances.min(), inner_distances.max())
         # print(x_inner, h_inner)
         # print(outer_distances.size, outer_distances.min(), outer_distances.max())
@@ -120,7 +121,7 @@ def visualize_distances(feat_version_names, feat_versions, labels, mark_labels=N
         gc.collect()
         ax2.flatten()[i].plot((x_inner[:-1] + x_inner[1:]) / 2, h_inner / h_inner.sum())
         ax2.flatten()[i].plot((x_outer[:-1] + x_outer[1:]) / 2, h_outer / h_outer.sum())
-        ax2.flatten()[i].set_title(feat_version_names[i] + ' (S)\n' + str(np.round(contrast, decimals=2)) + '  {:5.3f} / {:5.3f}'.format(inner, outer))
+        #ax2.flatten()[i].set_title(feat_version_names[i] + ' (S)\n' + str(np.round(contrast, decimals=2)) + '  {:5.3f} / {:5.3f}'.format(inner, outer))
         ax2.flatten()[i+1].plot((x_inner[:-1] + x_inner[1:]) / 2, np.cumsum(h_inner) / h_inner.sum())
         ax2.flatten()[i+1].plot((x_outer[:-1] + x_outer[1:]) / 2, np.cumsum(h_outer) / h_outer.sum())
         ax2.flatten()[i + 1].grid(True)
@@ -164,7 +165,7 @@ if __name__ == '__main__':
     # extract_modes = ['', '_s', '_enh_rfnd', '_enh_rfnd_s']# '_blr', '_mix']
 
     feat_files = dict({'SalamanderID2025': os.path.join(ROOT_FEATURES, 'SalamanderID2025_Mega-384.npz'),
-                       'SeaTurtleID2022': os.path.join(ROOT_FEATURES, 'mega384_crefined_SeaTurtleID2022_mmr.npz'),
+                       'SeaTurtleID2022': os.path.join(ROOT_FEATURES, 'SeaTurtleID2022_resnet.npz'),#os.path.join(ROOT_FEATURES, 'SeaTurtleID2022_Mega-384.npz'),#
                        'LynxID2025': os.path.join(ROOT_FEATURES, 'LynxID2025_resnet.npz'),#os.path.join(ROOT_FEATURES, 'LynxID2025_Mega-384_rfnd.npz'),#
                        #'LynxID2025': os.path.join(ROOT_FEATURES, 'LynxID2025_miewid.npz'),
                        'TexasHornedLizards': ''})
@@ -235,14 +236,21 @@ if __name__ == '__main__':
 
         #
         # ID packing (lynx)
-        big_id_list = [1, 26, 5, 8, 10, 23, 21, 14, 27, 40, 9, 25, 4, 20, 16, 6]
-        all_non_singletones = [1, 26, 5, 8, 10, 23, 21, 14, 27, 40, 9, 25, 4, 20, 16, 6, 0,
-                               3, 11, 17, 22, 29, 33, 28, 19, 24, 2, 38, 41, 12, 52, 44, 49, 15,
-                               34, 47, 51, 39, 43, 48, 42, 36, 54, 37, 46, 30, 31, 35, 32, 56, 50,
-                               59, 58, 13, 18, 53, 60, 61, 65, 66, 64, 57, 55, 72, 68, 63, 45, 67,
-                               69, 7, 73]
-        for_test = all_non_singletones[4::8]
-        all_non_singletones = list(set(all_non_singletones) - set(for_test))
+        if db_name == 'LynxID2025':
+            # big_id_list = [1, 26, 5, 8, 10, 23, 21, 14, 27, 40, 9, 25, 4, 20, 16, 6]
+            # all_non_singletones = [1, 26, 5, 8, 10, 23, 21, 14, 27, 40, 9, 25, 4, 20, 16, 6, 0,
+            #                        3, 11, 17, 22, 29, 33, 28, 19, 24, 2, 38, 41, 12, 52, 44, 49, 15,
+            #                        34, 47, 51, 39, 43, 48, 42, 36, 54, 37, 46, 30, 31, 35, 32, 56, 50,
+            #                        59, 58, 13, 18, 53, 60, 61, 65, 66, 64, 57, 55, 72, 68, 63, 45, 67,
+            #                        69, 7, 73]
+            # for_test = [59, 58, 13, 18, 53, 60, 61, 65, 66, 64, 57, 55, 72, 68, 63, 45, 67]#all_non_singletones#np.unique(labels[labels > -1])[219:]#all_non_singletones[4::8]
+            big_id_list = np.argwhere(np.bincount(labels[labels > -1]) > 1).flatten().astype(int)
+            for_test = big_id_list[0::2]
+            all_non_singletones = list(set(big_id_list) - set(for_test))
+        if db_name == 'SeaTurtleID2022':
+            all_IDs = np.unique(labels[labels > -1])
+            for_test = all_IDs
+            all_non_singletones = np.arange(400)
 
         if CLASSIFIER:
             for i1 in range(len(labels)):
@@ -253,15 +261,29 @@ if __name__ == '__main__':
                         #print(i1, labels[i1])
                         labels[i1] = int(np.argwhere(labels[i1] == all_non_singletones).squeeze()) + 1
             #
-            dtct = np.argmax(features.squeeze(), axis=1)
+            dtct = np.argmax(features.squeeze()[:, :40], axis=1)
             from sklearn.metrics import confusion_matrix
 
             cm = confusion_matrix(labels, dtct)
             fig_cm, ax_cm = plt.subplots(1, 1)
-            sns.heatmap(cm, annot=True, fmt='d', xticklabels=np.unique(labels),
-                                    yticklabels=np.unique(labels))
+            sns.heatmap(cm[:40, :40], annot=True, fmt='d', xticklabels=np.unique(labels)[:40],
+                                    yticklabels=np.unique(labels)[:40])
             acc = np.diag(cm[1:][:, 1:]).sum() / cm[1:][:, 1:].sum()
             fig_cm.suptitle('accuracy (on train examples) = {:5.2f}'.format(acc))
+            #
+            # tests
+            mask_close = labels > 0
+            mask_open = labels == 0
+            logits = np.exp(features.squeeze()) / np.exp(features.squeeze()).sum(axis=1, keepdims=True)
+            features = logits
+            winners_close = np.sort(features.squeeze()[mask_close], axis=1)[:, ::-1][:, :2]
+            winners_open = np.sort(features.squeeze()[mask_open], axis=1)[:, ::-1][:, :2]
+            fig_tests, ax_tests = plt.subplots(1, 1)
+            for (m, r) in zip(winners_close[:, 0], winners_close[:, 1]):
+                ax_tests.scatter(m, r, s=10, c='b', edgecolors='none')
+            for (m, r) in zip(winners_open[:, 0], winners_open[:, 1]):
+                ax_tests.scatter(m, r, s=10, c='r', edgecolors='none')
+            ax_tests.grid(True)
             #
             # document detections of test
             test_dtct_list = dict()

@@ -10,12 +10,16 @@ class HybridLoss(torch.nn.Module):
         super().__init__()
         self.s = s
         self.m = m
-        self.triplet_gap = triplet_margin
-        self.triplet_weight = triplet_weight
+        self.triplet_margin = triplet_margin
+        # self.triplet_weight = triplet_weight
+        #
+        self.arc_weight = 1.0 /  max(1, triplet_margin - self.m)
+        self.triplet_weight = min(triplet_weight, 1)
+        #
         self.eps = 1e-7
 
         # This finds the hardest triplets in the current batch
-        self.miner = miners.TripletMarginMiner(margin=triplet_margin, type_of_triplets="hard")
+        self.miner = miners.TripletMarginMiner(margin=triplet_margin, type_of_triplets="all")
 
         # This calculates the loss based on those mined triplets
         self.triplet_loss_fn = losses.TripletMarginLoss(margin=triplet_margin)
@@ -44,14 +48,28 @@ class HybridLoss(torch.nn.Module):
         loss_arc = F.cross_entropy(output, labels)
 
         # Triplet part: The miner finds the indices of the hard samples
+        #print(labels.max().detach().cpu().numpy())
         hard_pairs = self.miner(embeds, labels)
         loss_triplet = self.triplet_loss_fn(embeds, labels, hard_pairs)
 
 
         # --- 3. Final Weighted Combination ---
-        total_loss = loss_arc + (self.triplet_weight * loss_triplet)
+        total_loss = self.arc_weight * loss_arc + self.triplet_weight * loss_triplet
 
         return total_loss, loss_arc, loss_triplet
+
+    def get_params(self):
+
+        return {'arc_weight': self.arc_weight, 'triplet_weight': self.triplet_weight,
+                'arc_margin': self.m, 'triplet_margin': self.triplet_margin}
+
+
+    def set_params(self, params):
+
+        self.arc_weight = params['arc_weight']
+        self.triplet_weight = params['triplet_weight']
+        self.m = params['arc_margin']
+        self.triplet_margin = params['triplet_margin']
 
 
 

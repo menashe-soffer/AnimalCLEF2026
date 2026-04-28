@@ -7,7 +7,7 @@ import random
 from wildlife_datasets.datasets import AnimalCLEF2026
 
 from paths_and_constants import *
-from image_tools import UnderwaterEnhance, TextureHarvest, AddGaussianNoise
+from image_tools import UnderwaterEnhance, TextureHarvest, AddGaussianNoise, AdaptiveCrop
 
 
 
@@ -52,6 +52,8 @@ class AnimalCLEFTripletDataset(Dataset):
             self.id_to_indices[l_int].append(idx)
         if not include_test:
             self.id_to_indices.pop(-1)
+        for id in exclude_ID_list:
+            self.id_to_indices.pop(id)
 
         # 2. Build Frequencies
         self.id_counts = {k: len(v) for k, v in self.id_to_indices.items()}
@@ -148,7 +150,31 @@ class AnimalCLEFTripletDataset(Dataset):
         self.val_anchors = [i for i in all_pool_indices[split_idx:]
                             if int(labels_array[i]) in val_valid_ids]
 
+        # re-map IDs
+        all_ancs = np.concatenate((self.trn_anchors, self.val_anchors)).astype(int)
+        used_IDs = np.unique(self.base_dataset.labels[all_ancs])
+        for idx, lbl in enumerate(self.base_dataset.labels):
+            if lbl in used_IDs:
+                self.base_dataset.labels[idx] = np.argwhere(lbl == used_IDs).squeeze()
+            else:
+                self.base_dataset.labels[idx] = -1
+        #
+        self.num_IDs = len(used_IDs)
+        #
+        new_id_to_indices = {}
+        for new_id, old_id in enumerate(used_IDs):
+            new_id_to_indices[new_id] = self.id_to_indices[old_id]
+        self.id_to_indices = new_id_to_indices
+
+
         print(f"Prepared {len(self.trn_anchors)} trn and {len(self.val_anchors)} val anchors.")
+
+
+
+    def get_num_IDs(self):
+
+        return self.num_IDs
+
 
 
     def enable_singletons(self, trn_enabled: bool, val_enabled: bool):
@@ -283,21 +309,27 @@ if __name__ == '__main__':
     # --- 1. Define typical transformations for Re-ID ---
     # Since you're working with 384x384 (Mega-384), we use that size.
     train_transforms = T.Compose([
-        UnderwaterEnhance,  # First, fix the visibility
-        T.Resize((512, 512)),
+        T.ToTensor(),
+        T.Resize((640, 640)),
+        AdaptiveCrop(),
+        UnderwaterEnhance(),  # First, fix the visibility
+        T.Resize((384, 384)),
         T.RandomHorizontalFlip(p=0.5),
         T.RandomRotation(15),
         T.ColorJitter(brightness=0.12, contrast=0.12),
-        T.ToTensor(),
+        #T.ToTensor(),
         # TextureHarvest(),
         # AddGaussianNoise(),
         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
     val_transforms = T.Compose([
-        #UnderwaterEnhance,  # First, fix the visibility
-        T.Resize((384, 384)),
         T.ToTensor(),
+        T.Resize((640, 640)),
+        AdaptiveCrop(),
+        UnderwaterEnhance(),  # First, fix the visibility
+        T.Resize((384, 384)),
+        #T.ToTensor(),
         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 

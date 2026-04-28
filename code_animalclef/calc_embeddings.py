@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
+import json
 
 import tqdm
 import torch
@@ -45,15 +46,24 @@ config = model_feature_config()
 config.select_config_version(CONFIG)
 
 
-for db_name in ['SalamanderID2025', 'SeaTurtleID2022', 'LynxID2025', 'TexasHornedLizards'][2:3]:
+for db_name in ['SalamanderID2025', 'SeaTurtleID2022', 'LynxID2025', 'TexasHornedLizards'][1:2]:
 
     cfg = config.get_embedding_config(db_name)
 
     #model = AnimalReIDRefiner(model_name=model_names[db_name], weights_file=wgt_files[db_name], use_projector=False)
     wgt_file = weights_file=os.path.join(ROOT_MODELS, cfg['wgt_file'] + '.pth') if cfg['wgt_file'] is not None else None
+    if wgt_file is not None:
+        param_file = wgt_file.replace('.pth', '.json').replace('_sil', '')
+        if os.path.exists(param_file):
+            params = json.load(open(param_file, 'r'))['model_params']
+    else:
+        params = {'use_projector': False, 'use_marg': False, 'projection_dim': None, 'logit_dim': None, 'K': None}
+    #
+    params = {'use_projector': True, 'projection_dim': 512, 'use_marg': False, 'logit_dim': 40, 'K': 3}
+    cfg['wgt_file'] = wgt_file
     model = AnimalReIDRefiner(model_name=cfg['model_name'], weights_file=wgt_file,
-                              use_projector=cfg['use_projector'], projection_dim=384,
-                              use_marg=True, marg_num_clases=63)
+                              use_projector=params['use_projector'], projection_dim=params['projection_dim'],
+                              use_marg=params['use_marg'], marg_num_clases=params['logit_dim'], marg_K=params['K'])
     model.to(device).eval()
 
 
@@ -71,7 +81,7 @@ for db_name in ['SalamanderID2025', 'SeaTurtleID2022', 'LynxID2025', 'TexasHorne
     #     dataset.set_transform(T.Compose([UnderwaterEnhance, transform]))
 
     transform = T.Compose([
-        T.Resize(size=cfg['size']),
+        #T.Resize(size=((384, 384))),
         T.ToTensor(),
         T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
     ])

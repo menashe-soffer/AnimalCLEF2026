@@ -23,11 +23,11 @@ from my_models import AnimalReIDRefiner
 from image_tools import UnderwaterEnhance, AddGaussianNoise, TextureHarvest
 from model_featue_config import model_feature_config
 from PKsampler import PKSampler, AbsoluteConstraintLoss
+from ID_management import ID_manager
 
 
 
-
-def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8+4, weighted_data=False, device='cuda', as_classifier=False):
+def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8+4, weighted_data=False, device='cuda', as_classifier=False, subset=0):
 
     model.to(device)
 
@@ -40,7 +40,7 @@ def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8+4
     #criterion = torch.nn.TripletMarginLoss(margin=0.5, p=2)
     if as_classifier:
         criterion = torch.nn.CrossEntropyLoss()
-        output_fname = copy.copy(output_fname).replace('.pth', '.cls.pth')
+        output_fname = copy.copy(output_fname).replace('.pth', '.cls.{}.pth'.format(subset))
     else:
         criterion = AbsoluteConstraintLoss(pos_margin=0.2, neg_margin=0.6)
 
@@ -243,7 +243,7 @@ def train_model(model, dataset, output_fname, epochs=10, lr=1e-4, batch_size=8+4
 
 
 
-def train_main(dset_name, cfg, num_epochs=5, ena_singlton=False, weighted_data=True, as_classifier=False):
+def train_main(dset_name, cfg, num_epochs=5, ena_singlton=False, weighted_data=True, as_classifier=False, subset=0):
 
 
     # (1) Generate and configure models
@@ -256,23 +256,30 @@ def train_main(dset_name, cfg, num_epochs=5, ena_singlton=False, weighted_data=T
     )
     base_dataset = dataset_full.get_subset(dataset_full.df['dataset'] == dset_name)
     triplet_ds = AnimalCLEFTripletDataset()
-    triplet_ds.enable_singletons(trn_enabled=ena_singlton, val_enabled=True)
-    big_id_list = [1, 26, 5, 8, 10, 23, 21, 14, 27, 40, 9, 25, 4, 20, 16, 6]
+    triplet_ds.enable_singletons(trn_enabled=ena_singlton, val_enabled=not as_classifier)
+    # big_id_list = np.argwhere(np.bincount(base_dataset.labels[base_dataset.labels > -1]) > 1).flatten().astype(int)
+    # singletone_list = np.argwhere(np.bincount(base_dataset.labels[base_dataset.labels > -1]) == 1).flatten().astype(int)
+    # exclude_list = np.concatenate((big_id_list[subset::2], singletone_list))
+    id_mng = ID_manager(min_for_trn=4, num_subsets=2)
+    id_mng.load_labels(base_dataset.labels)
+    subset_ID_list, exclude_list = id_mng.get_subset_for_train(subset=subset)
     triplet_ds.attach_dataset(base_dataset=base_dataset, max_allowed_class_size=None,
-                              exclude_ID_list=[] if as_classifier else big_id_list ,
-                              merge_IDs_not_in=big_id_list if as_classifier else [],
+                              exclude_ID_list=exclude_list,
+                              merge_IDs_not_in=[],
                               include_test=False)
 
     # We use your generic class from before
-    projection_dim = len(big_id_list) + 1 if as_classifier else 256
-    model = AnimalReIDRefiner(model_name=cfg['model_name'], weights_file=None, use_projector=cfg['use_projector'], projection_dim=projection_dim)
+    projection_dim = len(subset_ID_list) if as_classifier else 256
+    model = AnimalReIDRefiner(model_name=cfg['model_name'], weights_file=None,
+                              use_projector=cfg['use_projector'], projection_dim=projection_dim,
+                              use_marg=False, marg_num_clases=len(subset_ID_list), marg_K=2)
     #model.freeze_for_training(active_stages=[2, 3])
 
     # (2) define transforms
     # Since you're working with 384x384 (Mega-384), we use that size.
     train_transforms = T.Compose([
         #UnderwaterEnhance,  # First, fix the visibility
-        T.Resize(cfg['size']),
+        #T.Resize(cfg['size']),
         T.RandomHorizontalFlip(p=0.5),
         T.RandomRotation(15),
         T.RandomGrayscale(0.2),
@@ -281,17 +288,13 @@ def train_main(dset_name, cfg, num_epochs=5, ena_singlton=False, weighted_data=T
         AddGaussianNoise(),
         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
-    if cfg['enhance']:
-        train_transforms = T.Compose([UnderwaterEnhance, train_transforms])
 
     val_transforms = T.Compose([
         #UnderwaterEnhance,  # First, fix the visibility
-        T.Resize(cfg['size']),
+        #T.Resize(cfg['size']),
         T.ToTensor(),
         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
-    if cfg['enhance']:
-        val_transforms = T.Compose([UnderwaterEnhance, val_transforms])
 
     # Configure transforms (using the ones we discussed earlier)
     triplet_ds.config_trn_transforms(train_transforms)
@@ -301,7 +304,8 @@ def train_main(dset_name, cfg, num_epochs=5, ena_singlton=False, weighted_data=T
     # You might want to filter the base_ds to turtles ONLY before this step
     print("\n--- Starting {} Refinement ---".format(dset_name))
     output_fname = os.path.join(ROOT_MODELS,'{}.pth'.format(cfg['wgt_file']))
-    refined_model = train_model(model=model, dataset=triplet_ds, output_fname=output_fname, epochs=num_epochs, weighted_data=weighted_data, lr=cfg['lr'], as_classifier=as_classifier)
+    refined_model = train_model(model=model, dataset=triplet_ds, output_fname=output_fname, epochs=num_epochs,
+                                weighted_data=weighted_data, lr=cfg['lr'], as_classifier=as_classifier, subset=subset)
 
     # # Save the specific weights
     output_fname_final = output_fname.replace('.pth', '_final.pth')
@@ -311,13 +315,21 @@ def train_main(dset_name, cfg, num_epochs=5, ena_singlton=False, weighted_data=T
 
 if __name__ == '__main__':
 
-    dset_name = 'LynxID2025'
+    #dset_name = 'SeaTurtleID2022'#'LynxID2025'#
+    for dset_name in ['SeaTurtleID2022', 'LynxID2025']:
 
-    config = model_feature_config()
-    config.select_config_version('rsrch')
-    train_cfg = config.get_training_config(dset_name)
-    train_main(dset_name, train_cfg, ena_singlton=True, weighted_data=False, num_epochs=25+75, as_classifier=True) # stage 1 - classification (of big IDs)
-    train_main(dset_name, train_cfg, ena_singlton=True, weighted_data=False, num_epochs=25+75, as_classifier=False) # stage 2 - clusstering (of remaining)
+        # config = model_feature_config()
+        # config.select_config_version('rsrch')
+        #train_cfg = config.get_training_config(dset_name)
+        train_cfg = {'model_name': 'resnet', 'wgt_file': '{}_resnet'.format(dset_name), 'lr': 1e-4, 'use_projector': True}
+        if dset_name == 'SeaTurtleID2022':
+            num_epochs = 150
+        if dset_name == 'LynxID2025':
+            num_epochs = 50
+
+        train_main(dset_name, train_cfg, ena_singlton=True, weighted_data=False, num_epochs=num_epochs, as_classifier=True, subset=0) # stage 1 - classification (of big IDs)
+        train_main(dset_name, train_cfg, ena_singlton=True, weighted_data=False, num_epochs=num_epochs, as_classifier=True, subset=1) # stage 1 - classification (of big IDs)
+        # train_main(dset_name, train_cfg, ena_singlton=True, weighted_data=False, num_epochs=25+75, as_classifier=False) # stage 2 - clusstering (of remaining)
 
     plt.show() # hold the plot
 
